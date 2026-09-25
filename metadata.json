@@ -1,0 +1,6 @@
+{
+  "name": "Covalent Bond Lab",
+  "description": "Interactive chemistry simulation where students build covalent bonds for molecules by placing valence electrons as dots and crosses.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
