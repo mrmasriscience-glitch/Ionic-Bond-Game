@@ -405,6 +405,90 @@ export const PeriodicTableReference: React.FC = () => {
             })}
           </div>
         </div>
+
+        {/* Common Radicals (Polyatomic Ions) */}
+        <div>
+          <span className="text-[11px] font-mono font-bold text-amber-400 uppercase tracking-wider block mb-1.5">
+            Common Polyatomic Radicals (Nitrates, Sulfates, Phosphates, Carbonates, Hydroxides, Ammonium)
+          </span>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2.5">
+            {[
+              {
+                formula: 'NO₃⁻',
+                name: 'Nitrate',
+                charge: '−1',
+                note: 'Needs 1 e⁻',
+                color: 'text-sky-400',
+                border: 'border-sky-500/40',
+                bg: 'bg-sky-950/40',
+              },
+              {
+                formula: 'SO₄²⁻',
+                name: 'Sulfate',
+                charge: '−2',
+                note: 'Needs 2 e⁻',
+                color: 'text-amber-400',
+                border: 'border-amber-500/40',
+                bg: 'bg-amber-950/40',
+              },
+              {
+                formula: 'PO₄³⁻',
+                name: 'Phosphate',
+                charge: '−3',
+                note: 'Needs 3 e⁻',
+                color: 'text-purple-400',
+                border: 'border-purple-500/40',
+                bg: 'bg-purple-950/40',
+              },
+              {
+                formula: 'CO₃²⁻',
+                name: 'Carbonate',
+                charge: '−2',
+                note: 'Needs 2 e⁻',
+                color: 'text-emerald-400',
+                border: 'border-emerald-500/40',
+                bg: 'bg-emerald-950/40',
+              },
+              {
+                formula: 'OH⁻',
+                name: 'Hydroxide',
+                charge: '−1',
+                note: 'Needs 1 e⁻',
+                color: 'text-rose-400',
+                border: 'border-rose-500/40',
+                bg: 'bg-rose-950/40',
+              },
+              {
+                formula: 'NH₄⁺',
+                name: 'Ammonium',
+                charge: '+1',
+                note: 'Cation (+1)',
+                color: 'text-indigo-400',
+                border: 'border-indigo-500/40',
+                bg: 'bg-indigo-950/40',
+              },
+            ].map((rad) => (
+              <div
+                key={rad.formula}
+                className={`p-3 rounded-xl border ${rad.border} ${rad.bg} text-left flex flex-col justify-between h-28 relative shadow-sm`}
+              >
+                <div className="flex items-center justify-between w-full">
+                  <span className="text-[10px] font-mono text-slate-400 font-bold">RADICAL</span>
+                  <span className={`text-[11px] font-mono font-black ${rad.color}`}>{rad.charge}</span>
+                </div>
+
+                <div className="text-center">
+                  <span className={`text-xl font-black font-sans block ${rad.color}`}>{rad.formula}</span>
+                  <span className="text-[11px] text-slate-200 font-semibold block">{rad.name}</span>
+                </div>
+
+                <div className="pt-1 border-t border-slate-800/80 text-[9.5px] font-mono flex items-center justify-between">
+                  <span className="text-slate-300 font-medium">{rad.note}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* Detailed Element Inspector Panel */}

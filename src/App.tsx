@@ -906,6 +906,16 @@ export default function App() {
                           );
                         })}
                       </optgroup>
+                      <optgroup label="Level 4: Polyatomic Radicals · Nitrates, Sulfates, Phosphates (14 Compounds)">
+                        {MOLECULES.filter((m) => m.level === 'radicals').map((m) => {
+                          const idx = MOLECULES.findIndex((mol) => mol.id === m.id);
+                          return (
+                            <option key={m.id} value={idx}>
+                              #{idx + 1}: {m.name} ({m.formula}){completedMolecules.has(m.id) ? ' ✓' : ''}
+                            </option>
+                          );
+                        })}
+                      </optgroup>
                     </select>
 
                     <button

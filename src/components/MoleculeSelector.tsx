@@ -19,13 +19,14 @@ export const MoleculeSelector: React.FC<MoleculeSelectorProps> = ({
   onSelectMolecule,
   completedMolecules,
 }) => {
-  const [filterLevel, setFilterLevel] = useState<'all' | 'beginner' | 'intermediate' | 'advanced'>('all');
+  const [filterLevel, setFilterLevel] = useState<'all' | 'beginner' | 'intermediate' | 'advanced' | 'radicals'>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
   const levels = [
     { id: 'beginner', label: '1:1 Ratio · Binary Transfer', count: 16, tag: 'Beginner' },
     { id: 'intermediate', label: '1:2 & 2:1 Ratios · Multi-Ion Balance', count: 15, tag: 'Intermediate' },
     { id: 'advanced', label: '1:3 & 2:3 Ratios · Complex Charges', count: 5, tag: 'Advanced' },
+    { id: 'radicals', label: 'Polyatomic Radicals · Nitrates, Sulfates, Phosphates & Carbonates', count: 14, tag: 'Radicals' },
   ] as const;
 
   const filteredMolecules = useMemo(() => {
@@ -126,6 +127,17 @@ export const MoleculeSelector: React.FC<MoleculeSelectorProps> = ({
             <span>1:3 & 2:3 Complex</span>
             <span className="text-[10px] opacity-75 font-mono">(5)</span>
           </button>
+          <button
+            onClick={() => setFilterLevel('radicals')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+              filterLevel === 'radicals'
+                ? 'bg-amber-500 text-slate-950 shadow-md font-bold'
+                : 'bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700'
+            }`}
+          >
+            <span>Polyatomic Radicals</span>
+            <span className="text-[10px] opacity-75 font-mono">(14)</span>
+          </button>
         </div>
 
         {/* Quick Search */}
@@ -135,7 +147,7 @@ export const MoleculeSelector: React.FC<MoleculeSelectorProps> = ({
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search 36 compounds (e.g. CaO, CaCl₂, Al₂O₃)..."
+            placeholder="Search 50 compounds (e.g. NaNO₃, MgSO₄, AlPO₄, CaCO₃)..."
             className="w-full bg-slate-950/80 border border-slate-700 text-slate-200 text-xs rounded-lg pl-8 pr-3 py-1.5 placeholder:text-slate-500 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/30 transition-all"
           />
           {searchQuery && (

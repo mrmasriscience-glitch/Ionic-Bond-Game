@@ -567,7 +567,13 @@ export const MolecularCanvas: React.FC<MolecularCanvasProps> = ({
                   fontSize: '10px',
                 }}
               >
-                {isCation ? 'Metal Cation' : 'Non-Metal Anion'}
+                {isCation
+                  ? atom.element.isRadical
+                    ? 'Polyatomic Cation'
+                    : 'Metal Cation'
+                  : atom.element.isRadical
+                  ? 'Polyatomic Radical Anion'
+                  : 'Non-Metal Anion'}
               </text>
             </g>
           );
@@ -726,6 +732,8 @@ export const MolecularCanvas: React.FC<MolecularCanvasProps> = ({
               >
                 {isCation
                   ? 'Outer Shell Emptied'
+                  : atom.element.isRadical
+                  ? 'Radical Valence Shell (Octet)'
                   : `Outermost Shell (n=${atom.element.period || (atom.innerShellRadii ? atom.innerShellRadii.length + 1 : 2)})`}
               </text>
             </g>
@@ -733,54 +741,72 @@ export const MolecularCanvas: React.FC<MolecularCanvasProps> = ({
         })}
 
         {/* 3. Atom Nuclei (Center Badges) */}
-        {molecule.atoms.map((atom) => (
-          <g key={`nucleus-${atom.id}`} className="pointer-events-none select-none">
-            {/* Nucleus Core Circle */}
-            <circle
-              cx={atom.x}
-              cy={atom.y}
-              r={24}
-              fill={atom.element.color}
-              stroke="#ffffff"
-              strokeWidth="1.5"
-              className="shadow-lg"
-              filter="url(#glow)"
-            />
+        {molecule.atoms.map((atom) => {
+          const isRadical = atom.element.isRadical || atom.element.symbol.length > 2;
+          return (
+            <g key={`nucleus-${atom.id}`} className="pointer-events-none select-none">
+              {/* Nucleus Core Badge */}
+              {isRadical ? (
+                <rect
+                  x={atom.x - 30}
+                  y={atom.y - 24}
+                  width={60}
+                  height={48}
+                  rx={22}
+                  fill={atom.element.color}
+                  stroke="#ffffff"
+                  strokeWidth="1.5"
+                  className="shadow-lg"
+                  filter="url(#glow)"
+                />
+              ) : (
+                <circle
+                  cx={atom.x}
+                  cy={atom.y}
+                  r={24}
+                  fill={atom.element.color}
+                  stroke="#ffffff"
+                  strokeWidth="1.5"
+                  className="shadow-lg"
+                  filter="url(#glow)"
+                />
+              )}
 
-            {/* Atomic Symbol */}
-            <text
-              x={atom.x}
-              y={atom.y + 6}
-              textAnchor="middle"
-              className="text-base font-extrabold fill-white select-none pointer-events-none tracking-wider"
-              style={{ fontSize: '16px' }}
-            >
-              {atom.element.symbol}
-            </text>
+              {/* Atomic / Radical Symbol */}
+              <text
+                x={atom.x}
+                y={atom.y + 6}
+                textAnchor="middle"
+                className="font-extrabold fill-white select-none pointer-events-none tracking-wider"
+                style={{ fontSize: isRadical ? '14px' : '16px' }}
+              >
+                {atom.element.symbol}
+              </text>
 
-            {/* Atomic number badge */}
-            <text
-              x={atom.x}
-              y={atom.y - 12}
-              textAnchor="middle"
-              className="text-[9px] font-mono fill-slate-300 select-none pointer-events-none"
-              style={{ fontSize: '9px' }}
-            >
-              {atom.element.atomicNumber}
-            </text>
+              {/* Atomic number or Radical badge */}
+              <text
+                x={atom.x}
+                y={atom.y - 12}
+                textAnchor="middle"
+                className="text-[9px] font-mono fill-slate-300 select-none pointer-events-none"
+                style={{ fontSize: isRadical ? '8px' : '9px' }}
+              >
+                {isRadical ? 'Radical' : atom.element.atomicNumber}
+              </text>
 
-            {/* Element Name */}
-            <text
-              x={atom.x}
-              y={atom.y + 20}
-              textAnchor="middle"
-              className="text-[9px] font-mono select-none pointer-events-none font-semibold fill-slate-300"
-              style={{ fontSize: '9px' }}
-            >
-              {atom.element.name}
-            </text>
-          </g>
-        ))}
+              {/* Element Name */}
+              <text
+                x={atom.x}
+                y={atom.y + 20}
+                textAnchor="middle"
+                className="text-[9px] font-mono select-none pointer-events-none font-semibold fill-slate-300"
+                style={{ fontSize: '9px' }}
+              >
+                {atom.element.name}
+              </text>
+            </g>
+          );
+        })}
 
         {/* 4. Optional Faint Educational Guide (Only if hints manually toggled ON in Guided Mode) */}
         {!isHardMode && showHints && (

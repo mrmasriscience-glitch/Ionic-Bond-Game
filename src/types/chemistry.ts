@@ -23,9 +23,10 @@ export interface ChemicalElement {
   maxValence: number; // 8 for octet
   type: 'metal' | 'non-metal';
   ionCharge: number; // e.g. +1, +2, +3, -1, -2, -3
-  ionSymbol: string; // e.g. "Na⁺", "Mg²⁺", "Cl⁻", "O²⁻"
+  ionSymbol: string; // e.g. "Na⁺", "Mg²⁺", "Cl⁻", "O²⁻", "NO₃⁻"
   color: string;
   textColor: string;
+  isRadical?: boolean;
 }
 
 export interface MoleculeAtom {
@@ -93,7 +94,7 @@ export interface MoleculeDefinition {
   id: string;
   name: string;
   formula: string;
-  level: 'beginner' | 'intermediate' | 'advanced';
+  level: 'beginner' | 'intermediate' | 'advanced' | 'radicals';
   description: string;
   bondTypeSummary: string; // e.g. "1:1 Ion Ratio · Na⁺ and Cl⁻" or "1:2 Ion Ratio · Mg²⁺ and 2 Cl⁻"
   cationRatio: number;

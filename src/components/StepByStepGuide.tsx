@@ -72,6 +72,20 @@ export const StepByStepGuide: React.FC<{ onStartBuilding: () => void }> = ({ onS
       ],
       proTip: 'Use the "cross-over rule" to check: the charge number of the cation becomes the subscript of the anion, and vice-versa, simplified to the smallest whole-number ratio!',
     },
+    {
+      step: 6,
+      title: 'Polyatomic Radicals (Nitrates, Sulfates, Phosphates)',
+      description: 'Radicals are covalently bound groups of atoms that carry an overall ionic charge and participate as single units in ionic bonding.',
+      details: [
+        'Nitrate (NO₃⁻) → carries a 1− charge. Combines in 1:1 ratio with Na⁺ (NaNO₃) or 1:2 ratio with Ca²⁺ (Ca(NO₃)₂).',
+        'Sulfate (SO₄²⁻) → carries a 2− charge. Combines 1:1 with Mg²⁺ (MgSO₄ · Epsom Salt) or 2:1 with Na⁺ (Na₂SO₄).',
+        'Phosphate (PO₄³⁻) → carries a 3− charge. Combines 1:1 with Al³⁺ (AlPO₄) or 3:1 with Na⁺ (Na₃PO₄).',
+        'Carbonate (CO₃²⁻) & Hydroxide (OH⁻) → CaCO₃ (Limestone) and NaOH (Caustic Soda).',
+        'Ammonium (NH₄⁺) → is a unique polyatomic cation radical that acts like an alkali metal ion (NH₄Cl).',
+        'Bracket Rule in Formulas: If more than one radical is needed, enclose the radical formula in brackets with the subscript outside, e.g. Ca(NO₃)₂, never CaN₂O₆!',
+      ],
+      proTip: 'In dot-and-cross diagrams, treat the radical as a single bracketed entity whose valence shell accepts electrons from the donor cation to complete a stable octet.',
+    },
   ];
 
   const current = steps[activeStep - 1];
