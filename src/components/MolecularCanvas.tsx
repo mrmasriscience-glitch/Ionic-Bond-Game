@@ -7,6 +7,33 @@ import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { ZoomIn, ZoomOut, Maximize2, ArrowRight } from 'lucide-react';
 import { MoleculeDefinition, ElectronType, PlacedElectron } from '../types/chemistry';
 import { snapElectronPosition, classifyElectron, generateIdealPositions } from '../utils/geometry';
+import { soundEffects } from '../utils/audio';
+
+function getIonName(symbol: string, name: string, isCation: boolean): string {
+  if (isCation) {
+    return `${name} Cation`;
+  }
+  const anionNameMap: Record<string, string> = {
+    Cl: 'Chloride',
+    F: 'Fluoride',
+    Br: 'Bromide',
+    I: 'Iodide',
+    O: 'Oxide',
+    S: 'Sulfide',
+    N: 'Nitride',
+    NO3: 'Nitrate',
+    SO4: 'Sulfate',
+    PO4: 'Phosphate',
+    CO3: 'Carbonate',
+    OH: 'Hydroxide',
+    'NO₃': 'Nitrate',
+    'SO₄': 'Sulfate',
+    'PO₄': 'Phosphate',
+    'CO₃': 'Carbonate',
+  };
+  const base = anionNameMap[symbol] || name;
+  return `${base} Anion`;
+}
 
 interface MolecularCanvasProps {
   molecule: MoleculeDefinition;
@@ -50,6 +77,37 @@ export const MolecularCanvas: React.FC<MolecularCanvasProps> = ({
     startPanX: 0,
     startPanY: 0,
   });
+
+  // Track ionized atoms to play audio chime when an atom successfully turns into an ion
+  const prevIonizedAtomIdsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    const currentIonized = new Set<string>();
+    const newlyIonized: string[] = [];
+
+    molecule.atoms.forEach((atom) => {
+      const isCation = atom.role === 'cation';
+      const atomElectrons = placedElectrons.filter(
+        (e) => Math.hypot(e.x - atom.x, e.y - atom.y) <= atom.radius + 38
+      );
+      const isIon = isCation ? atomElectrons.length === 0 : atomElectrons.length >= 8;
+      if (isIon) {
+        currentIonized.add(atom.id);
+        if (!prevIonizedAtomIdsRef.current.has(atom.id)) {
+          newlyIonized.push(atom.id);
+        }
+      }
+    });
+
+    if (newlyIonized.length > 0 && prevIonizedAtomIdsRef.current.size > 0) {
+      const sampleAtom = molecule.atoms.find((a) => a.id === newlyIonized[0]);
+      if (sampleAtom) {
+        soundEffects.playIonFormed(sampleAtom.role === 'cation');
+      }
+    }
+
+    prevIonizedAtomIdsRef.current = currentIonized;
+  }, [molecule.id, molecule.atoms, placedElectrons]);
 
   // Calculate default bounding box of all atom orbits and brackets with generous padding
   const defaultBounds = useMemo(() => {
@@ -364,6 +422,120 @@ export const MolecularCanvas: React.FC<MolecularCanvasProps> = ({
     []
   );
 
+  // Compute live ionization states for every atom in the molecule
+  // Ensures atoms start as neutral atoms without brackets or charges,
+  // and dynamically turn into ions with brackets, official charges, and ion names as electrons are dragged
+  const atomStates = useMemo(() => {
+    const map: Record<
+      string,
+      {
+        isCation: boolean;
+        initialValence: number;
+        currentCount: number;
+        isFullyIonized: boolean;
+        isPartiallyIonized: boolean;
+        isNeutral: boolean;
+        electronsLost: number;
+        electronsGained: number;
+        officialChargeText: string;
+        ionName: string;
+        bracketColor: string;
+      }
+    > = {};
+
+    molecule.atoms.forEach((atom) => {
+      const isCation = atom.role === 'cation';
+      const initialValence = atom.element.valenceElectrons;
+
+      // Check if the currently dragged electron originated from this atom
+      const isDragSource = Boolean(
+        draggingElectronId &&
+          dragStartPosRef.current &&
+          Math.hypot(dragStartPosRef.current.x - atom.x, dragStartPosRef.current.y - atom.y) <= atom.radius + 32
+      );
+
+      // Filter placed electrons currently residing on this atom's shell
+      const atomElectrons = placedElectrons.filter((e) => {
+        if (e.id === draggingElectronId) {
+          // While dragging: if it originated on this atom, it has left this atom!
+          if (isDragSource) return false;
+          // If it's an anion, it only joins this atom if snapped/near vacancy
+          const dist = Math.hypot(e.x - atom.x, e.y - atom.y);
+          return Math.abs(dist - atom.radius) <= 24;
+        }
+        return Math.hypot(e.x - atom.x, e.y - atom.y) <= atom.radius + 34;
+      });
+
+      const currentCount = atomElectrons.length;
+
+      // Fully formed ion states:
+      // Cation: outer valence shell completely emptied (0 electrons on outer shell)
+      // Anion: complete octet of 8 electrons on outer shell
+      const isFullyIonized = isCation ? currentCount === 0 : currentCount >= 8;
+      const isPartiallyIonized = isCation
+        ? currentCount > 0 && currentCount < initialValence
+        : currentCount > initialValence && currentCount < 8;
+      const isNeutral = isCation ? currentCount >= initialValence : currentCount <= initialValence;
+
+      const electronsLost = Math.max(0, initialValence - currentCount);
+      const electronsGained = Math.max(0, currentCount - initialValence);
+
+      const officialChargeText = isCation
+        ? atom.element.ionCharge === 1
+          ? '⁺'
+          : `${atom.element.ionCharge}⁺`
+        : Math.abs(atom.element.ionCharge) === 1
+        ? '⁻'
+        : `${Math.abs(atom.element.ionCharge)}⁻`;
+
+      const ionName = getIonName(atom.element.symbol, atom.element.name, isCation);
+      const bracketColor = isCation ? '#a855f7' : '#10b981';
+
+      map[atom.id] = {
+        isCation,
+        initialValence,
+        currentCount,
+        isFullyIonized,
+        isPartiallyIonized,
+        isNeutral,
+        electronsLost,
+        electronsGained,
+        officialChargeText,
+        ionName,
+        bracketColor,
+      };
+    });
+
+    return map;
+  }, [molecule.atoms, placedElectrons, draggingElectronId]);
+
+  // Overall compound transformation summary (Reactant Atoms vs In Progress vs Ionic Compound)
+  const overallStatus = useMemo(() => {
+    const states = Object.values(atomStates);
+    const allNeutral = states.length > 0 && states.every((s) => s.isNeutral);
+    const allIonized = states.length > 0 && states.every((s) => s.isFullyIonized);
+    if (allNeutral) {
+      const reactants = molecule.atoms.map((a) => `${a.element.symbol}⁰`).join(' + ');
+      return {
+        type: 'neutral',
+        badgeText: `Reactant Atoms (${reactants})`,
+        instruction: 'Guided Mode: Drag metal valence electrons across to non-metal vacancies',
+      };
+    }
+    if (allIonized) {
+      return {
+        type: 'ionized',
+        badgeText: `Ionic Compound · ${molecule.bondTypeSummary}`,
+        instruction: '✓ All atoms converted to ions! Ionic bond successfully formed.',
+      };
+    }
+    return {
+      type: 'transferring',
+      badgeText: 'Ionization in Progress: Atoms → Ions',
+      instruction: 'Drag electrons across to complete non-metal octets',
+    };
+  }, [atomStates, molecule.atoms, molecule.bondTypeSummary]);
+
   return (
     <div className="relative w-full aspect-[840/510] min-h-[360px] max-h-[440px] lg:max-h-[470px] bg-slate-950/90 border border-slate-800 rounded-xl shadow-xl overflow-hidden select-none">
       {/* Background Starfield & Grid Pattern */}
@@ -421,14 +593,16 @@ export const MolecularCanvas: React.FC<MolecularCanvasProps> = ({
       <div className="absolute top-2.5 left-2.5 z-20 flex items-center gap-2 bg-slate-900/85 backdrop-blur-md border border-slate-800 px-2.5 py-1 rounded-lg text-xs font-mono">
         <span className="text-cyan-300 font-bold">{molecule.formula}</span>
         <span className="text-slate-500">|</span>
-        <span className="text-slate-300">{molecule.bondTypeSummary}</span>
+        <span className={overallStatus.type === 'ionized' ? 'text-emerald-400 font-semibold' : 'text-slate-300'}>
+          {overallStatus.badgeText}
+        </span>
       </div>
 
       {/* Mode Instruction Pill */}
       {!isHardMode ? (
         <div className="absolute top-2.5 left-1/2 -translate-x-1/2 z-20 hidden sm:flex items-center gap-1.5 bg-slate-900/90 backdrop-blur-md border border-cyan-500/40 px-3 py-1 rounded-full text-[11px] font-medium text-cyan-200 shadow-lg">
           <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
-          <span>Guided Mode: Drag metal valence electrons across to non-metal</span>
+          <span>{overallStatus.instruction}</span>
         </div>
       ) : (
         <div className="absolute top-2.5 left-1/2 -translate-x-1/2 z-20 hidden sm:flex items-center gap-1.5 bg-slate-900/90 backdrop-blur-md border border-rose-500/40 px-3 py-1 rounded-full text-[11px] font-medium text-rose-300 shadow-lg">
@@ -500,89 +674,188 @@ export const MolecularCanvas: React.FC<MolecularCanvasProps> = ({
           </filter>
         </defs>
 
-        {/* 1. Square Brackets & Superscript Charges for Each Ion */}
+        {/* 1. Square Brackets, Superscript Charges, & Non-Overlapping Status Badges */}
         {molecule.atoms.map((atom) => {
+          const state = atomStates[atom.id];
+          if (!state) return null;
+          const {
+            isCation,
+            bracketColor,
+            isFullyIonized,
+            isPartiallyIonized,
+            isNeutral,
+            electronsLost,
+            electronsGained,
+            officialChargeText,
+            ionName,
+            initialValence,
+          } = state;
+
           const r = atom.radius;
           const bw = 14; // Bracket arm width
           const bh = r + 18; // Bracket half-height
           const bxLeft = atom.x - r - 16;
           const bxRight = atom.x + r + 16;
+          const bracketTopY = atom.y - bh;
 
-          const isCation = atom.role === 'cation';
-          const bracketColor = isCation ? '#a855f7' : '#10b981';
-          const chargeText = isCation
-            ? atom.element.ionCharge === 1
-              ? '⁺'
-              : `${atom.element.ionCharge}⁺`
-            : Math.abs(atom.element.ionCharge) === 1
-            ? '⁻'
-            : `${Math.abs(atom.element.ionCharge)}⁻`;
+          // Safe, non-overlapping badge pill geometry:
+          // Keep the badge centered at atom.x and clamped strictly inside the brackets,
+          // so it NEVER extends to the right bracket or covers the + / − charge symbols!
+          const maxBadgeHalfWidth = Math.max(54, Math.min(74, r - 8));
+          const badgeWidth = maxBadgeHalfWidth * 2;
+          const badgeX = -maxBadgeHalfWidth;
+          // Position the badge clearly above the bracket top arm
+          const badgeY = Math.max(16, bracketTopY - 18);
 
           return (
-            <g key={`brackets-${atom.id}`} className="select-none pointer-events-none">
-              {/* Left Square Bracket '[' */}
-              <path
-                d={`M ${bxLeft + bw},${atom.y - bh} L ${bxLeft},${atom.y - bh} L ${bxLeft},${atom.y + bh} L ${bxLeft + bw},${atom.y + bh}`}
-                fill="none"
-                stroke={bracketColor}
-                strokeWidth="2.5"
-                strokeLinecap="square"
-                opacity="0.9"
-                filter="url(#bracketGlow)"
-              />
+            <g key={`brackets-${atom.id}`} className="select-none pointer-events-none transition-all duration-300">
+              {/* Status Badge Above Atom / Ion (rendered first so brackets & charge symbols are always on top) */}
+              <g transform={`translate(${atom.x}, ${badgeY})`} className="transition-all duration-300">
+                {isNeutral ? (
+                  /* Neutral Atom Tag */
+                  <g>
+                    <rect
+                      x={badgeX}
+                      y={-11}
+                      width={badgeWidth}
+                      height={22}
+                      rx={11}
+                      fill="#0f172a"
+                      stroke="#475569"
+                      strokeWidth="1.2"
+                      className="shadow-sm"
+                    />
+                    <text
+                      x={0}
+                      y={3.5}
+                      textAnchor="middle"
+                      className="text-[9px] font-mono font-bold tracking-tight fill-slate-300 select-none uppercase"
+                    >
+                      {atom.element.isRadical ? 'Radical' : 'Atom'} ({atom.element.symbol}⁰)
+                    </text>
+                  </g>
+                ) : isPartiallyIonized ? (
+                  /* Ionizing in progress tag */
+                  <g>
+                    <rect
+                      x={badgeX}
+                      y={-11}
+                      width={badgeWidth}
+                      height={22}
+                      rx={11}
+                      fill="#1e1b4b"
+                      stroke="#fbbf24"
+                      strokeWidth="1.2"
+                      className="shadow-sm"
+                    />
+                    <text
+                      x={0}
+                      y={3.5}
+                      textAnchor="middle"
+                      className="text-[9px] font-mono font-bold tracking-tight fill-amber-300 select-none uppercase"
+                    >
+                      ⚡ {isCation ? `Losing (+${electronsLost})` : `Gaining (${electronsGained}−)`}
+                    </text>
+                  </g>
+                ) : (
+                  /* Fully Formed Ion Badge: Cation or Anion Overlay (safely centered, never overlapping brackets or charges) */
+                  <g filter="url(#bracketGlow)">
+                    <rect
+                      x={badgeX}
+                      y={-12}
+                      width={badgeWidth}
+                      height={24}
+                      rx={12}
+                      fill={isCation ? '#2e1065' : '#064e3b'}
+                      stroke={bracketColor}
+                      strokeWidth="1.5"
+                      className="shadow-md"
+                    />
+                    <text
+                      x={0}
+                      y={3.5}
+                      textAnchor="middle"
+                      className={`text-[9.5px] font-mono font-black tracking-tight select-none uppercase ${
+                        isCation ? 'fill-purple-200' : 'fill-emerald-200'
+                      }`}
+                    >
+                      ✓ {isCation ? `${atom.element.name} Cation` : ionName}
+                    </text>
+                  </g>
+                )}
+              </g>
 
-              {/* Right Square Bracket ']' */}
-              <path
-                d={`M ${bxRight - bw},${atom.y - bh} L ${bxRight},${atom.y - bh} L ${bxRight},${atom.y + bh} L ${bxRight - bw},${atom.y + bh}`}
-                fill="none"
-                stroke={bracketColor}
-                strokeWidth="2.5"
-                strokeLinecap="square"
-                opacity="0.9"
-                filter="url(#bracketGlow)"
-              />
+              {/* Square brackets rendered around formed or partially formed ion */}
+              {!isNeutral && (
+                <>
+                  {/* Left Square Bracket '[' */}
+                  <path
+                    d={`M ${bxLeft + bw},${atom.y - bh} L ${bxLeft},${atom.y - bh} L ${bxLeft},${atom.y + bh} L ${bxLeft + bw},${atom.y + bh}`}
+                    fill="none"
+                    stroke={bracketColor}
+                    strokeWidth={isFullyIonized ? 2.8 : 1.8}
+                    strokeDasharray={isFullyIonized ? 'none' : '4 3'}
+                    strokeLinecap="square"
+                    opacity={isFullyIonized ? 1 : 0.6}
+                    filter={isFullyIonized ? 'url(#bracketGlow)' : undefined}
+                    className="transition-all duration-300"
+                  />
 
-              {/* High-legibility Superscript Ion Charge */}
-              <text
-                x={bxRight + 8}
-                y={atom.y - bh + 14}
-                className="font-mono font-black select-none pointer-events-none"
-                style={{
-                  fontSize: '22px',
-                  fill: isCation ? '#c084fc' : '#34d399',
-                  filter: 'drop-shadow(0 0 4px rgba(0,0,0,0.8))',
-                }}
-              >
-                {chargeText}
-              </text>
+                  {/* Right Square Bracket ']' */}
+                  <path
+                    d={`M ${bxRight - bw},${atom.y - bh} L ${bxRight},${atom.y - bh} L ${bxRight},${atom.y + bh} L ${bxRight - bw},${atom.y + bh}`}
+                    fill="none"
+                    stroke={bracketColor}
+                    strokeWidth={isFullyIonized ? 2.8 : 1.8}
+                    strokeDasharray={isFullyIonized ? 'none' : '4 3'}
+                    strokeLinecap="square"
+                    opacity={isFullyIonized ? 1 : 0.6}
+                    filter={isFullyIonized ? 'url(#bracketGlow)' : undefined}
+                    className="transition-all duration-300"
+                  />
 
-              {/* Role badge (Cation vs Anion) */}
-              <text
-                x={atom.x}
-                y={atom.y - r - 26}
-                textAnchor="middle"
-                className="text-[10px] font-mono font-bold tracking-wider select-none uppercase pointer-events-none"
-                style={{
-                  fill: isCation ? '#c084fc' : '#34d399',
-                  fontSize: '10px',
-                }}
-              >
-                {isCation
-                  ? atom.element.isRadical
-                    ? 'Polyatomic Cation'
-                    : 'Metal Cation'
-                  : atom.element.isRadical
-                  ? 'Polyatomic Radical Anion'
-                  : 'Non-Metal Anion'}
-              </text>
+                  {/* High-legibility Superscript Ion Charge (placed clearly to the right of ']' with zero occlusion) */}
+                  <text
+                    x={bxRight + 10}
+                    y={atom.y - bh + 14}
+                    textAnchor="start"
+                    className="font-mono font-black select-none pointer-events-none transition-all duration-300"
+                    style={{
+                      fontSize: isFullyIonized ? '24px' : '17px',
+                      fill: isFullyIonized
+                        ? isCation
+                          ? '#d8b4fe'
+                          : '#6ee7b7'
+                        : '#fbbf24',
+                      filter: 'drop-shadow(0 2px 5px rgba(0,0,0,0.95))',
+                    }}
+                  >
+                    {isFullyIonized
+                      ? officialChargeText
+                      : isCation
+                      ? `+${electronsLost}`
+                      : `${electronsGained}−`}
+                  </text>
+                </>
+              )}
             </g>
           );
         })}
 
         {/* 2. Atom Valence Shell Circular Orbits (Visible Inner Shells with Inferred Dots/Crosses + Outermost Interactive Shell) */}
         {molecule.atoms.map((atom) => {
-          const isCation = atom.role === 'cation';
-          const orbitStroke = isCation ? '#8b5cf6' : '#10b981';
+          const state = atomStates[atom.id];
+          if (!state) return null;
+          const { isCation, isFullyIonized, isPartiallyIonized, isNeutral, currentCount, initialValence } = state;
+
+          const orbitStroke = isFullyIonized
+            ? isCation
+              ? '#c084fc'
+              : '#34d399'
+            : isPartiallyIonized
+            ? '#fbbf24'
+            : '#64748b';
+
           const assignedType: ElectronType = (atomSymbols && atomSymbols[atom.id]) || atom.symbol;
           const isDot = assignedType === 'dot';
           const innerRingStroke = isDot ? '#06b6d4' : '#f59e0b';
@@ -704,11 +977,11 @@ export const MolecularCanvas: React.FC<MolecularCanvasProps> = ({
                 cy={atom.y}
                 r={atom.radius}
                 fill="#0f172a"
-                fillOpacity="0.45"
+                fillOpacity={isCation && isFullyIonized ? '0.15' : '0.45'}
                 stroke={orbitStroke}
-                strokeWidth="2.2"
-                strokeDasharray={isCation ? '4 3' : 'none'}
-                className="transition-colors duration-300"
+                strokeWidth={isFullyIonized ? 2.5 : 2.0}
+                strokeDasharray={isCation && isFullyIonized ? '4 3' : 'none'}
+                className="transition-all duration-300"
               />
 
               {/* Soft inner aura */}
@@ -722,19 +995,27 @@ export const MolecularCanvas: React.FC<MolecularCanvasProps> = ({
                 opacity="0.3"
               />
 
-              {/* Outermost shell descriptor text */}
+              {/* Outermost shell descriptor text (with safe clearance below square bracket when ionized) */}
               <text
                 x={atom.x}
-                y={atom.y + atom.radius + 18}
+                y={atom.y + atom.radius + (isNeutral ? 18 : 30)}
                 textAnchor="middle"
                 className="text-[9px] font-mono select-none pointer-events-none fill-slate-400 font-semibold"
                 style={{ fontSize: '9.5px' }}
               >
-                {isCation
-                  ? 'Outer Shell Emptied'
+                {isFullyIonized
+                  ? isCation
+                    ? `✓ Outer Shell Emptied (0e⁻ · Stable [${(atom.element.innerShells || [2, 8]).join(', ')}] Octet)`
+                    : `✓ Stable Octet (8e⁻ Noble Gas Config)`
+                  : isPartiallyIonized
+                  ? isCation
+                    ? `⚡ Losing Valence e⁻ (${currentCount} remaining)`
+                    : `⚡ Gaining Valence e⁻ (${currentCount} of 8)`
+                  : isCation
+                  ? `Valence Shell (${initialValence} e⁻ to transfer)`
                   : atom.element.isRadical
-                  ? 'Radical Valence Shell (Octet)'
-                  : `Outermost Shell (n=${atom.element.period || (atom.innerShellRadii ? atom.innerShellRadii.length + 1 : 2)})`}
+                  ? `Radical Valence Shell (${initialValence} e⁻ · ${8 - initialValence} Vacanc${8 - initialValence === 1 ? 'y' : 'ies'})`
+                  : `Valence Shell (${initialValence} e⁻ · ${8 - initialValence} Vacanc${8 - initialValence === 1 ? 'y' : 'ies'})`}
               </text>
             </g>
           );
@@ -742,48 +1023,54 @@ export const MolecularCanvas: React.FC<MolecularCanvasProps> = ({
 
         {/* 3. Atom Nuclei (Center Badges) */}
         {molecule.atoms.map((atom) => {
+          const state = atomStates[atom.id];
           const isRadical = atom.element.isRadical || atom.element.symbol.length > 2;
+          const isIon = state?.isFullyIonized ?? false;
+          const isCation = atom.role === 'cation';
+          const officialChargeText = state?.officialChargeText || (isCation ? '⁺' : '⁻');
+          const ionName = state?.ionName || `${atom.element.name} Ion`;
+
           return (
             <g key={`nucleus-${atom.id}`} className="pointer-events-none select-none">
               {/* Nucleus Core Badge */}
               {isRadical ? (
                 <rect
-                  x={atom.x - 30}
-                  y={atom.y - 24}
-                  width={60}
-                  height={48}
+                  x={atom.x - 32}
+                  y={atom.y - 25}
+                  width={64}
+                  height={50}
                   rx={22}
                   fill={atom.element.color}
-                  stroke="#ffffff"
-                  strokeWidth="1.5"
-                  className="shadow-lg"
+                  stroke={isIon ? (isCation ? '#c084fc' : '#34d399') : '#ffffff'}
+                  strokeWidth={isIon ? 2.5 : 1.5}
+                  className="shadow-lg transition-all duration-300"
                   filter="url(#glow)"
                 />
               ) : (
                 <circle
                   cx={atom.x}
                   cy={atom.y}
-                  r={24}
+                  r={25}
                   fill={atom.element.color}
-                  stroke="#ffffff"
-                  strokeWidth="1.5"
-                  className="shadow-lg"
+                  stroke={isIon ? (isCation ? '#c084fc' : '#34d399') : '#ffffff'}
+                  strokeWidth={isIon ? 2.5 : 1.5}
+                  className="shadow-lg transition-all duration-300"
                   filter="url(#glow)"
                 />
               )}
 
-              {/* Atomic / Radical Symbol */}
+              {/* Atomic / Ion Symbol */}
               <text
                 x={atom.x}
                 y={atom.y + 6}
                 textAnchor="middle"
-                className="font-extrabold fill-white select-none pointer-events-none tracking-wider"
-                style={{ fontSize: isRadical ? '14px' : '16px' }}
+                className="font-extrabold fill-white select-none pointer-events-none tracking-wider transition-all duration-300"
+                style={{ fontSize: isRadical ? (isIon ? '12px' : '14px') : (isIon ? '14px' : '16px') }}
               >
-                {atom.element.symbol}
+                {isIon ? `[${atom.element.symbol}]${officialChargeText}` : atom.element.symbol}
               </text>
 
-              {/* Atomic number or Radical badge */}
+              {/* Top Tag: Atomic Number when Atom / Charge when Ion */}
               <text
                 x={atom.x}
                 y={atom.y - 12}
@@ -791,18 +1078,26 @@ export const MolecularCanvas: React.FC<MolecularCanvasProps> = ({
                 className="text-[9px] font-mono fill-slate-300 select-none pointer-events-none"
                 style={{ fontSize: isRadical ? '8px' : '9px' }}
               >
-                {isRadical ? 'Radical' : atom.element.atomicNumber}
+                {isIon
+                  ? `${isCation ? 'Cation' : 'Anion'} ${officialChargeText}`
+                  : isRadical
+                  ? 'Radical'
+                  : `Z = ${atom.element.atomicNumber}`}
               </text>
 
-              {/* Element Name */}
+              {/* Element or Ion Name */}
               <text
                 x={atom.x}
                 y={atom.y + 20}
                 textAnchor="middle"
                 className="text-[9px] font-mono select-none pointer-events-none font-semibold fill-slate-300"
-                style={{ fontSize: '9px' }}
+                style={{ fontSize: isIon ? '8px' : '9px' }}
               >
-                {atom.element.name}
+                {isIon
+                  ? isCation
+                    ? `${atom.element.name} Cation`
+                    : ionName
+                  : `${atom.element.name} Atom`}
               </text>
             </g>
           );

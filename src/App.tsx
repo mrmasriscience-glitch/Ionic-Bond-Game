@@ -338,7 +338,7 @@ export default function App() {
 
       if (cationElectrons.length > 0 && targetSlot) {
         const electronToMove = cationElectrons[0];
-        handleUpdateElectron(electronToMove.id, targetSlot.x, targetSlot.y);
+        handleUpdateElectron(electronToMove.id, targetSlot.x, targetSlot.y, true);
         soundEffects.playPlace(electronToMove.type);
         return;
       }
@@ -822,7 +822,9 @@ export default function App() {
                     >
                       {isHardMode
                         ? '• Ratio: Undisclosed'
-                        : `• ${currentMolecule.bondTypeSummary}`}
+                        : feedback.isValid
+                        ? `• ${currentMolecule.bondTypeSummary}`
+                        : '• Guided: Drag metal e⁻ to form ions'}
                     </span>
                     {!isEndless && completedMolecules.has(currentMolecule.id) && (
                       <span className="text-[10px] text-emerald-400 font-medium flex items-center gap-0.5 bg-emerald-950/60 border border-emerald-500/30 px-1.5 py-0.2 rounded">

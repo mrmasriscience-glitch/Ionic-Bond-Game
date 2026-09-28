@@ -7,6 +7,30 @@ import React from 'react';
 import { Eraser, Lightbulb, Eye, EyeOff, CheckCircle2, ArrowRight, Shuffle, RotateCcw, Sparkles } from 'lucide-react';
 import { MoleculeDefinition, ElectronType, PlacedElectron } from '../types/chemistry';
 
+function getIonName(symbol: string, name: string, isCation: boolean): string {
+  if (isCation) return `${name} Cation`;
+  const anionNameMap: Record<string, string> = {
+    Cl: 'Chloride',
+    F: 'Fluoride',
+    Br: 'Bromide',
+    I: 'Iodide',
+    O: 'Oxide',
+    S: 'Sulfide',
+    N: 'Nitride',
+    NO3: 'Nitrate',
+    SO4: 'Sulfate',
+    PO4: 'Phosphate',
+    CO3: 'Carbonate',
+    OH: 'Hydroxide',
+    'NO₃': 'Nitrate',
+    'SO₄': 'Sulfate',
+    'PO₄': 'Phosphate',
+    'CO₃': 'Carbonate',
+  };
+  const base = anionNameMap[symbol] || name;
+  return `${base} Anion`;
+}
+
 interface ElectronTrayProps {
   molecule: MoleculeDefinition;
   placedElectrons: PlacedElectron[];
@@ -209,54 +233,83 @@ export const ElectronTray: React.FC<ElectronTrayProps> = ({
           {/* Atom Role Inference Cards */}
           <div className="grid grid-cols-2 gap-2 text-xs">
             {/* Donor Metal Card */}
-            <div className="bg-slate-800/60 border border-slate-700/60 rounded-lg p-2 flex flex-col gap-1">
+            <div className={`rounded-lg p-2 flex flex-col gap-1 border transition-all ${
+              cationOuterElectronsCount === 0
+                ? 'bg-purple-950/40 border-purple-500/50 shadow-md'
+                : 'bg-slate-800/60 border-slate-700/60'
+            }`}>
               <div className="flex items-center justify-between">
                 <span className="font-bold text-white truncate">
-                  {donorMetal?.element.name} ({donorMetal?.element.symbol})
+                  {cationOuterElectronsCount === 0
+                    ? `✓ [${donorMetal?.element.symbol}]⁺ ${donorMetal?.element.name} Cation`
+                    : `${donorMetal?.element.name} Atom (${donorMetal?.element.symbol}⁰)`}
                 </span>
-                <span className="text-[9px] font-mono uppercase bg-slate-900 text-slate-400 px-1 rounded">
-                  Donor Metal
+                <span className={`text-[9px] font-mono uppercase px-1 rounded ${
+                  cationOuterElectronsCount === 0
+                    ? 'bg-purple-900/80 text-purple-200 border border-purple-500/40'
+                    : 'bg-slate-900 text-slate-400'
+                }`}>
+                  {cationOuterElectronsCount === 0 ? 'Cation Formed' : 'Neutral Atom'}
                 </span>
               </div>
               <div className="flex items-center gap-1.5 text-[11px]">
-                <span className="text-slate-400">Inner Symbol:</span>
+                <span className="text-slate-400">Dot/Cross:</span>
                 <span className={`font-bold font-mono ${donorSymbol === 'dot' ? 'text-cyan-400' : 'text-amber-400'}`}>
                   {donorSymbol === 'dot' ? '● Dot' : '✖ Cross'}
                 </span>
               </div>
-              <div className="text-[10px] text-slate-400">
+              <div className="text-[10px]">
                 {cationOuterElectronsCount === 0 ? (
-                  <span className="text-emerald-400 font-semibold">✓ Shell Emptied ([{donorMetal?.element.symbol}]⁺)</span>
+                  <span className="text-purple-300 font-semibold">✓ Shell Emptied → Stable [2,8] Core</span>
                 ) : (
-                  <span>{cationOuterElectronsCount} outer e⁻ to transfer</span>
+                  <span className="text-slate-400">{cationOuterElectronsCount} valence e⁻ to transfer</span>
                 )}
               </div>
             </div>
 
             {/* Acceptor Non-Metal Card */}
-            <div className="bg-slate-800/60 border border-slate-700/60 rounded-lg p-2 flex flex-col gap-1">
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-white truncate">
-                  {receiverNonMetal?.element.name} ({receiverNonMetal?.element.symbol})
-                </span>
-                <span className="text-[9px] font-mono uppercase bg-slate-900 text-slate-400 px-1 rounded">
-                  Acceptor Non-Metal
-                </span>
-              </div>
-              <div className="flex items-center gap-1.5 text-[11px]">
-                <span className="text-slate-400">Inner Symbol:</span>
-                <span className={`font-bold font-mono ${receiverSymbol === 'dot' ? 'text-cyan-400' : 'text-amber-400'}`}>
-                  {receiverSymbol === 'dot' ? '● Dot' : '✖ Cross'}
-                </span>
-              </div>
-              <div className="text-[10px] text-slate-400">
-                {anionOuterElectronsCount >= 8 ? (
-                  <span className="text-emerald-400 font-semibold">✓ Octet 8 e⁻ Formed</span>
-                ) : (
-                  <span>{8 - anionOuterElectronsCount} open vacancy slot(s)</span>
-                )}
-              </div>
-            </div>
+            {(() => {
+              const receiverIonName = receiverNonMetal
+                ? getIonName(receiverNonMetal.element.symbol, receiverNonMetal.element.name, false)
+                : 'Anion';
+              const isOctetDone = anionOuterElectronsCount >= 8;
+
+              return (
+                <div className={`rounded-lg p-2 flex flex-col gap-1 border transition-all ${
+                  isOctetDone
+                    ? 'bg-emerald-950/40 border-emerald-500/50 shadow-md'
+                    : 'bg-slate-800/60 border-slate-700/60'
+                }`}>
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-white truncate">
+                      {isOctetDone
+                        ? `✓ [${receiverNonMetal?.element.symbol}]⁻ ${receiverIonName}`
+                        : `${receiverNonMetal?.element.name} Atom (${receiverNonMetal?.element.symbol}⁰)`}
+                    </span>
+                    <span className={`text-[9px] font-mono uppercase px-1 rounded ${
+                      isOctetDone
+                        ? 'bg-emerald-900/80 text-emerald-200 border border-emerald-500/40'
+                        : 'bg-slate-900 text-slate-400'
+                    }`}>
+                      {isOctetDone ? 'Anion Formed' : 'Neutral Atom'}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-[11px]">
+                    <span className="text-slate-400">Dot/Cross:</span>
+                    <span className={`font-bold font-mono ${receiverSymbol === 'dot' ? 'text-cyan-400' : 'text-amber-400'}`}>
+                      {receiverSymbol === 'dot' ? '● Dot' : '✖ Cross'}
+                    </span>
+                  </div>
+                  <div className="text-[10px]">
+                    {isOctetDone ? (
+                      <span className="text-emerald-300 font-semibold">✓ Octet 8 e⁻ Formed (Noble Gas Config)</span>
+                    ) : (
+                      <span className="text-slate-400">{8 - anionOuterElectronsCount} open vacancy slot(s) remaining</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
       ) : (

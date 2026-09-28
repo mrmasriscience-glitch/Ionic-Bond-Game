@@ -70,7 +70,7 @@ class SoundEffects {
     }
   }
 
-  // Triumphant chord when covalent bond is validated successfully!
+  // Triumphant chord when covalent/ionic compound is validated successfully!
   playSuccess() {
     const ctx = this.getContext();
     if (!ctx) return;
@@ -92,6 +92,31 @@ class SoundEffects {
         osc.start(startTime);
         osc.stop(startTime + 0.45);
       });
+    } catch {
+      // ignore
+    }
+  }
+
+  // Resonant chime when an atom successfully turns into an ion
+  playIonFormed(isCation: boolean) {
+    const ctx = this.getContext();
+    if (!ctx) return;
+    try {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      const baseFreq = isCation ? 659.25 : 783.99; // E5 or G5
+      osc.frequency.setValueAtTime(baseFreq, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(baseFreq * 1.25, ctx.currentTime + 0.12);
+
+      gain.gain.setValueAtTime(0.001, ctx.currentTime);
+      gain.gain.linearRampToValueAtTime(0.12, ctx.currentTime + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.22);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.22);
     } catch {
       // ignore
     }
