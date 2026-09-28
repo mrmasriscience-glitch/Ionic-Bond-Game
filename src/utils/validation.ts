@@ -7,7 +7,8 @@ import { MoleculeDefinition, ValidationFeedback, ElectronType, PlacedElectron } 
 
 export function validateMolecule(
   molecule: MoleculeDefinition,
-  electrons: PlacedElectron[]
+  electrons: PlacedElectron[],
+  assignedSymbols?: Record<string, ElectronType>
 ): ValidationFeedback {
   // Group electrons by the closest atom shell
   const atomElectrons: Record<string, PlacedElectron[]> = {};
@@ -38,29 +39,12 @@ export function validateMolecule(
     }
   });
 
-  // Check orientation: whether metal = dot & non-metal = cross (standard)
-  // or metal = cross & non-metal = dot (inverted)
-  // We accept both as long as it is internally consistent!
-  let standardFitScore = 0;
-  let invertedFitScore = 0;
+  // Determine metal and non-metal symbols from assignedSymbols or default to standard
+  const cationSample = molecule.atoms.find((a) => a.role === 'cation');
+  const anionSample = molecule.atoms.find((a) => a.role === 'anion');
 
-  molecule.atoms.forEach((atom) => {
-    const list = atomElectrons[atom.id] || [];
-    list.forEach((e) => {
-      if (atom.role === 'cation') {
-        if (e.type === 'dot') standardFitScore++;
-        if (e.type === 'cross') invertedFitScore++;
-      } else {
-        // Anion expected to have mostly non-metal electrons plus some transferred
-        if (e.type === 'cross') standardFitScore++;
-        if (e.type === 'dot') invertedFitScore++;
-      }
-    });
-  });
-
-  const orientation: 'standard' | 'inverted' = invertedFitScore > standardFitScore ? 'inverted' : 'standard';
-  const metalSym: ElectronType = orientation === 'standard' ? 'dot' : 'cross';
-  const nonMetalSym: ElectronType = orientation === 'standard' ? 'cross' : 'dot';
+  const metalSym: ElectronType = (cationSample && assignedSymbols?.[cationSample.id]) || 'dot';
+  const nonMetalSym: ElectronType = (anionSample && assignedSymbols?.[anionSample.id]) || (metalSym === 'dot' ? 'cross' : 'dot');
 
   const atomSymbols: Record<string, ElectronType> = {};
   molecule.atoms.forEach((atom) => {
@@ -89,7 +73,7 @@ export function validateMolecule(
       if (!isEmptied) {
         allCationsEmptied = false;
         tips.push(
-          `${atom.element.name} must lose ${initialValence === 1 ? 'its 1 valence electron' : `all ${initialValence} valence electrons`} to form ${atom.element.ionSymbol}.`
+          `${atom.element.name} must lose ${initialValence === 1 ? 'its 1 outer electron' : `all ${initialValence} outer electrons`} to form ${atom.element.ionSymbol}.`
         );
       }
 
@@ -106,7 +90,7 @@ export function validateMolecule(
         role: 'cation' as const,
       };
     } else {
-      // Non-metal anion must reach full octet of 8 electrons (or duet for H, but here octet)
+      // Non-metal anion must reach full octet of 8 electrons
       const targetOctet = 8;
       const originalValence = atom.element.valenceElectrons;
       const neededTransfers = targetOctet - originalValence;
@@ -129,9 +113,11 @@ export function validateMolecule(
           );
         } else if (count > 8) {
           tips.push(`${atom.element.name} has too many electrons (${count} e⁻). Anions hold a stable octet of 8 e⁻.`);
-        } else if (!correctTransferCount) {
+        } else if (!correctNonMetalCount || !correctTransferCount) {
+          const nonMetalGlyph = nonMetalSym === 'dot' ? 'dots (●)' : 'crosses (✖)';
+          const metalGlyph = metalSym === 'dot' ? 'dots (●)' : 'crosses (✖)';
           tips.push(
-            `${atom.element.name} should have ${originalValence} ${nonMetalSym === 'cross' ? 'crosses (✖)' : 'dots (●)'} from itself and ${neededTransfers} transferred ${metalSym === 'dot' ? 'dots (●)' : 'crosses (✖)'} from the metal.`
+            `Infer from inner shells: ${atom.element.name} must have ${originalValence} ${nonMetalGlyph} from itself, plus ${neededTransfers} transferred ${metalGlyph} from the metal.`
           );
         }
       }
@@ -171,7 +157,6 @@ export function validateMolecule(
   if (isNeutral) score += 5;
   score = Math.min(100, Math.max(0, score));
 
-  // Determine title and feedback message
   let title = 'Ionic Diagram in Progress';
   let message = '';
 
@@ -189,18 +174,39 @@ export function validateMolecule(
     } else if (cationCount > 1 && anionCount === 1) {
       message = `${cationCount} ${metalName} atoms each lose electrons, forming ${molecule.cationFormula}. ${nonMetalName} gains the transferred electrons to form ${molecule.anionFormula}. Overall charges balance (+${totalPositiveCharge} and -${totalNegativeCharge}) to give ${molecule.formula}!`;
     } else {
-      message = `${cationCount} ${molecule.cationFormula} ions (+${totalPositiveCharge}) balance with ${anionCount} ${molecule.anionFormula} ions (-${totalNegativeCharge}). Total charge is zero in the simplest whole-number ratio ${cationCount}:${anionCount} (${molecule.formula})!`;
+      message = `${cationCount} ${molecule.cationFormula} ions (+${totalPositiveCharge}) balance with ${anionCount} ${molecule.anionFormula} ions (-${totalNegativeCharge}). Total charge is zero in the smallest whole-number ratio ${cationCount}:${anionCount} (${molecule.formula})!`;
     }
   } else {
-    if (!allCationsEmptied) {
+    // Check if any anion has 8 electrons but wrong symbol distribution
+    const hasSymbolMismatch = molecule.atoms
+      .filter((a) => a.role === 'anion')
+      .some((a) => {
+        const list = atomElectrons[a.id] || [];
+        const nonMetalElectrons = list.filter((e) => e.type === nonMetalSym).length;
+        const transferredElectrons = list.filter((e) => e.type === metalSym).length;
+        return list.length === 8 && (nonMetalElectrons !== a.element.valenceElectrons || transferredElectrons !== (8 - a.element.valenceElectrons));
+      });
+
+    if (hasSymbolMismatch) {
+      const metalName = molecule.atoms.find((a) => a.role === 'cation')?.element.name || 'Metal';
+      const nonMetalName = molecule.atoms.find((a) => a.role === 'anion')?.element.name || 'Non-metal';
+      const nonMetalGlyph = nonMetalSym === 'dot' ? 'dots (●)' : 'crosses (✖)';
+      const metalGlyph = metalSym === 'dot' ? 'dots (●)' : 'crosses (✖)';
+      const anionSampleAtom = molecule.atoms.find((a) => a.role === 'anion');
+      const val = anionSampleAtom ? anionSampleAtom.element.valenceElectrons : 7;
+      const trans = 8 - val;
+
+      title = 'Wrong Electron Symbols (Dot / Cross Mismatch)';
+      message = `Infer from inner shells: ${nonMetalName} has ${nonMetalGlyph} in its inner shells, so its own ${val} outer electrons must be ${nonMetalGlyph}. The ${trans} electron${trans > 1 ? 's' : ''} transferred from ${metalName} must be ${metalGlyph}.`;
+    } else if (!allCationsEmptied) {
       title = 'Valence Electrons Still on Metal';
       message = 'Metals lose all of their outer valence electrons during ionic bonding to form positive ions (cations). Transfer these electrons into the non-metal outer shell!';
     } else if (!allAnionsSatisfied) {
       title = 'Non-Metal Octet Incomplete';
-      message = 'Non-metal atoms gain electrons from the metal until their outer shell contains a stable octet of 8 electrons.';
+      message = 'Look closely at the inner shells to infer which atom uses dots (●) and which uses crosses (✖). Non-metal atoms must hold 8 electrons (its own symbol + transferred symbol from the metal).';
     } else if (unassigned.length > 0) {
       title = 'Stray Electrons on Canvas';
-      message = 'Some electrons are placed outside the atom shells. Snap them onto the outer circles or use the eraser.';
+      message = 'Some electrons are placed outside the atom shells. Snap them onto the outermost circles or use the eraser.';
     } else {
       title = 'Check Charge Balance';
       message = 'Ensure the number of transferred dots and crosses correctly matches the ionic formula and neutral charge.';
@@ -215,10 +221,9 @@ export function validateMolecule(
     if (e.type === 'cross') placedCrosses++;
   });
 
-  const expectedDots = orientation === 'standard' ? molecule.expectedTotalDots : molecule.expectedTotalCrosses;
-  const expectedCrosses = orientation === 'standard' ? molecule.expectedTotalCrosses : molecule.expectedTotalDots;
+  const expectedDots = metalSym === 'dot' ? molecule.expectedTotalDots : molecule.expectedTotalCrosses;
+  const expectedCrosses = metalSym === 'cross' ? molecule.expectedTotalDots : molecule.expectedTotalCrosses;
 
-  // Mock bond status array for UI compatibility
   const bondStatuses = [
     {
       description: `${molecule.cationFormula} and ${molecule.anionFormula} Electrostatic Attraction`,
@@ -244,7 +249,7 @@ export function validateMolecule(
     crossesRemaining: Math.max(0, expectedCrosses - placedCrosses),
     expectedDots,
     expectedCrosses,
-    activeOrientation: orientation,
+    activeOrientation: metalSym === 'dot' ? 'standard' : 'inverted',
     atomSymbols,
     tips,
   };

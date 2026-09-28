@@ -24,7 +24,7 @@ export function classifyElectron(
   for (const atom of molecule.atoms) {
     const d = Math.hypot(x - atom.x, y - atom.y);
     // Generous snap radius around each atom's valence orbit
-    if (d <= atom.radius + 40 && d >= 18) {
+    if (d <= atom.radius + 48 && d >= 16) {
       const diff = Math.abs(d - atom.radius);
       if (diff < minDiff) {
         minDiff = diff;
@@ -46,7 +46,7 @@ export function classifyElectron(
 }
 
 /**
- * Smart snap to make freely placed electrons snap neatly around the atom's outer circle in pairs.
+ * Smart snap to make freely placed/dragged electrons snap neatly around the atom's outer circle in pairs.
  */
 export function snapElectronPosition(
   molecule: MoleculeDefinition,
@@ -67,7 +67,6 @@ export function snapElectronPosition(
   const angle = Math.atan2(y - atom.y, x - atom.x);
 
   // 8 standard quadrant pair positions (IGCSE standard: pairs at 12, 3, 6, 9 o'clock)
-  // Each quadrant has 2 paired sub-angles: e.g. at -90° (top) -> -100° and -80°
   const standardAngles = [
     // Top pair (around -PI/2)
     -Math.PI / 2 - 0.22,
@@ -83,38 +82,39 @@ export function snapElectronPosition(
     -Math.PI + 0.22,
   ];
 
-  // Find nearest unoccupied standard angle if close, otherwise place along orbit perimeter
   const r = atom.radius;
 
   // Check occupied angles on this atom
   const occupiedAngles = existingElectrons
-    .filter((e) => Math.hypot(e.x - atom.x, e.y - atom.y) <= atom.radius + 30)
+    .filter((e) => Math.hypot(e.x - atom.x, e.y - atom.y) <= atom.radius + 35)
     .map((e) => Math.atan2(e.y - atom.y, e.x - atom.x));
 
   let bestAngle = angle;
   let minAngleDiff = Infinity;
+  let hasVacantStandardAngle = false;
 
   for (const stdAngle of standardAngles) {
     let diff = Math.abs(angle - stdAngle);
     if (diff > Math.PI) diff = 2 * Math.PI - diff;
 
-    if (diff < minAngleDiff) {
-      // Check if already occupied
-      const isTaken = occupiedAngles.some((occ) => {
-        let occDiff = Math.abs(occ - stdAngle);
-        if (occDiff > Math.PI) occDiff = 2 * Math.PI - occDiff;
-        return occDiff < 0.18;
-      });
+    // Check if already occupied
+    const isTaken = occupiedAngles.some((occ) => {
+      let occDiff = Math.abs(occ - stdAngle);
+      if (occDiff > Math.PI) occDiff = 2 * Math.PI - occDiff;
+      return occDiff < 0.2;
+    });
 
-      if (!isTaken) {
+    if (!isTaken) {
+      hasVacantStandardAngle = true;
+      if (diff < minAngleDiff) {
         minAngleDiff = diff;
         bestAngle = stdAngle;
       }
     }
   }
 
-  // If clicked reasonably close to a standard position, snap to it, else smooth snap onto perimeter
-  const finalAngle = minAngleDiff < 0.5 ? bestAngle : angle;
+  // If there's an unoccupied standard slot and cursor is within generous range, snap into the slot!
+  const finalAngle = hasVacantStandardAngle && minAngleDiff < 0.85 ? bestAngle : angle;
 
   return {
     x: Math.round(atom.x + r * Math.cos(finalAngle)),
@@ -142,8 +142,10 @@ export function generateIdealPositions(
   // Total transferred electrons needed is sum of anion deficits
   // For each anion: original valence electrons are crosses (✖)
   // Transferred electrons from metals are dots (●)
-  const metalSymbol: ElectronType = 'dot';
-  const nonMetalSymbol: ElectronType = 'cross';
+  const cationSample = molecule.atoms.find((a) => a.role === 'cation');
+  const anionSample = molecule.atoms.find((a) => a.role === 'anion');
+  const metalSymbol: ElectronType = (cationSample && atomSymbols?.[cationSample.id]) || 'dot';
+  const nonMetalSymbol: ElectronType = (anionSample && atomSymbols?.[anionSample.id]) || 'cross';
 
   anions.forEach((anion) => {
     const val = anion.element.valenceElectrons; // e.g. 7 for Cl, 6 for O, 5 for N
@@ -181,28 +183,109 @@ export function generateIdealPositions(
 }
 
 /**
- * Generates neutral starting positions (before transfer) for tutorial / starting view:
- * Metal has its initial valence electrons (dots ●).
- * Non-metal has its initial valence electrons (crosses ✖).
+ * Generates neutral starting positions (before transfer) for Guided Mode:
+ * - Metal has its initial valence electrons placed on its outer orbit facing the transfer path.
+ * - Non-metal has its initial valence electrons placed in pairs at standard angles, leaving open vacancy slots facing the donor metal.
  */
-export function generateNeutralStartingPositions(molecule: MoleculeDefinition): PlacedElectron[] {
+export function generateNeutralStartingPositions(
+  molecule: MoleculeDefinition,
+  atomSymbols?: Record<string, ElectronType>
+): PlacedElectron[] {
   const result: PlacedElectron[] = [];
   let idCounter = 1;
 
+  const cations = molecule.atoms.filter((a) => a.role === 'cation');
+  const anions = molecule.atoms.filter((a) => a.role === 'anion');
+
+  // Standard 8 paired positions around the perimeter
+  const standardAngles = [
+    -Math.PI / 2 - 0.22, // Top 1
+    -Math.PI / 2 + 0.22, // Top 2
+    -0.22,               // Right 1
+    0.22,                // Right 2
+    Math.PI / 2 - 0.22,  // Bottom 1
+    Math.PI / 2 + 0.22,  // Bottom 2
+    Math.PI - 0.22,      // Left 1
+    -Math.PI + 0.22,     // Left 2
+  ];
+
   molecule.atoms.forEach((atom) => {
     const val = atom.element.valenceElectrons;
-    const type: ElectronType = atom.role === 'cation' ? 'dot' : 'cross';
+    const type: ElectronType = atomSymbols?.[atom.id] || (atom.role === 'cation' ? 'dot' : 'cross');
 
-    // Position valence electrons evenly around orbit
-    for (let i = 0; i < val; i++) {
-      const angle = -Math.PI / 2 + (i * 2 * Math.PI) / val;
-      result.push({
-        id: `start-${atom.id}-${idCounter++}`,
-        x: Math.round(atom.x + atom.radius * Math.cos(angle)),
-        y: Math.round(atom.y + atom.radius * Math.sin(angle)),
-        type,
-        parentAtomId: atom.id,
+    if (atom.role === 'anion') {
+      // Find closest cation to determine which standard slots should be the open vacancies facing the donor metal
+      let closestCation = cations[0];
+      let minDist = Infinity;
+      cations.forEach((c) => {
+        const d = Math.hypot(c.x - atom.x, c.y - atom.y);
+        if (d < minDist) {
+          minDist = d;
+          closestCation = c;
+        }
       });
+
+      const angleTowardsCation = closestCation
+        ? Math.atan2(closestCation.y - atom.y, closestCation.x - atom.x)
+        : Math.PI;
+
+      // Sort standard angles: angles furthest from cation are filled with native electrons,
+      // while the 8 - val angles closest to the cation remain vacant drop targets!
+      const sortedAngles = [...standardAngles].sort((a, b) => {
+        let diffA = Math.abs(a - angleTowardsCation);
+        if (diffA > Math.PI) diffA = 2 * Math.PI - diffA;
+        let diffB = Math.abs(b - angleTowardsCation);
+        if (diffB > Math.PI) diffB = 2 * Math.PI - diffB;
+        return diffB - diffA; // largest angle diff first
+      });
+
+      // Fill the native `val` electrons
+      const anglesToFill = sortedAngles.slice(0, val);
+      anglesToFill.forEach((ang) => {
+        result.push({
+          id: `start-${atom.id}-${idCounter++}`,
+          x: Math.round(atom.x + atom.radius * Math.cos(ang)),
+          y: Math.round(atom.y + atom.radius * Math.sin(ang)),
+          type,
+          parentAtomId: atom.id,
+        });
+      });
+    } else {
+      // For metal cations: place valence electrons facing the closest anion
+      let closestAnion = anions[0];
+      let minDist = Infinity;
+      anions.forEach((a) => {
+        const d = Math.hypot(a.x - atom.x, a.y - atom.y);
+        if (d < minDist) {
+          minDist = d;
+          closestAnion = a;
+        }
+      });
+
+      const angleTowardsAnion = closestAnion
+        ? Math.atan2(closestAnion.y - atom.y, closestAnion.x - atom.x)
+        : 0;
+
+      for (let i = 0; i < val; i++) {
+        let ang = angleTowardsAnion;
+        if (val === 1) {
+          ang = angleTowardsAnion;
+        } else if (val === 2) {
+          ang = angleTowardsAnion + (i === 0 ? -0.28 : 0.28);
+        } else if (val === 3) {
+          ang = angleTowardsAnion + (i === 0 ? -0.38 : i === 1 ? 0 : 0.38);
+        } else {
+          ang = angleTowardsAnion - 0.5 + (i * 1.0) / (val - 1);
+        }
+
+        result.push({
+          id: `start-${atom.id}-${idCounter++}`,
+          x: Math.round(atom.x + atom.radius * Math.cos(ang)),
+          y: Math.round(atom.y + atom.radius * Math.sin(ang)),
+          type,
+          parentAtomId: atom.id,
+        });
+      }
     }
   });
 

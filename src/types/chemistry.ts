@@ -17,6 +17,8 @@ export interface ChemicalElement {
   symbol: string;
   name: string;
   atomicNumber: number;
+  period?: number; // Principal quantum shell number (2, 3, 4)
+  innerShells?: number[]; // e.g. [2, 8] for Na/Cl, [2] for O/F/Li, [2, 8, 8] for Ca/K
   valenceElectrons: number;
   maxValence: number; // 8 for octet
   type: 'metal' | 'non-metal';
@@ -31,7 +33,8 @@ export interface MoleculeAtom {
   element: ChemicalElement;
   x: number;
   y: number;
-  radius: number;
+  radius: number; // Radius of outermost interactive shell
+  innerShellRadii?: number[]; // Radii of faint, non-interactive inner shells
   symbol: ElectronType; // Whether this atom donates dots or crosses
   role: 'cation' | 'anion';
   label?: string; // e.g. "Sodium Atom", "Chlorine Atom"

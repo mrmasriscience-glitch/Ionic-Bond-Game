@@ -22,25 +22,45 @@ import { GameOverModal } from './components/GameOverModal';
 import { Sparkles, ShieldCheck, Flame, ChevronLeft, ChevronRight, CheckCircle2, AlertCircle } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
+/**
+ * Returns initial electrons for a molecule:
+ * - In Exam Mode (hardMode = true): returns empty array [] so student places electrons onto outer rings.
+ * - In Guided Mode (hardMode = false): returns pre-filled neutral valence electrons ready to be dragged across.
+ */
+function getInitialElectrons(
+  mol: MoleculeDefinition,
+  orientation: 'cation-dot' | 'cation-cross',
+  hardMode: boolean
+): PlacedElectron[] {
+  if (hardMode) return [];
+  const syms: Record<string, ElectronType> = {};
+  mol.atoms.forEach((a) => {
+    syms[a.id] =
+      a.role === 'cation'
+        ? orientation === 'cation-dot'
+          ? 'dot'
+          : 'cross'
+        : orientation === 'cation-dot'
+        ? 'cross'
+        : 'dot';
+  });
+  return generateNeutralStartingPositions(mol, syms);
+}
+
 export default function App() {
   const [currentMoleculeIndex, setCurrentMoleculeIndex] = useState<number>(0);
   const [endlessMolecule, setEndlessMolecule] = useState<MoleculeDefinition>(() =>
     getRandomEndlessMolecule(1)
   );
 
-  // Placed electrons for the active compound
-  const [placedElectrons, setPlacedElectrons] = useState<PlacedElectron[]>([]);
+  // Active navigation tab
+  const [activeTab, setActiveTab] = useState<'builder' | 'endless' | 'guide' | 'periodictable' | 'viewer3d'>('builder');
 
-  // Active electron tool
-  const [activeTool, setActiveTool] = useState<'dot' | 'cross' | 'eraser'>('dot');
+  // Active compound based on tab
+  const isEndless = activeTab === 'endless';
+  const currentMolecule = isEndless ? endlessMolecule : MOLECULES[currentMoleculeIndex];
 
-  // Hints toggle
-  const [showHints, setShowHints] = useState<boolean>(false);
-
-  // Sound toggle
-  const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
-
-  // Hard Mode toggle (hides valence numbers and charge hints)
+  // Hard Mode toggle (Exam Mode: students draw outer shells by placing; Guided Mode: students drag electrons across)
   const [isHardMode, setIsHardMode] = useState<boolean>(() => {
     try {
       return (
@@ -52,6 +72,45 @@ export default function App() {
     }
   });
 
+  // Randomize if left or right is crosses/dots for every session/compound:
+  // 50% chance metal cations are 'dot' and non-metal anions are 'cross' ('cation-dot')
+  // 50% chance metal cations are 'cross' and non-metal anions are 'dot' ('cation-cross')
+  const [symbolOrientation, setSymbolOrientation] = useState<'cation-dot' | 'cation-cross'>(() =>
+    Math.random() < 0.5 ? 'cation-dot' : 'cation-cross'
+  );
+
+  const atomSymbols = useMemo<Record<string, ElectronType>>(() => {
+    const map: Record<string, ElectronType> = {};
+    const cationSymbol: ElectronType = symbolOrientation === 'cation-dot' ? 'dot' : 'cross';
+    const anionSymbol: ElectronType = symbolOrientation === 'cation-dot' ? 'cross' : 'dot';
+    currentMolecule.atoms.forEach((atom) => {
+      map[atom.id] = atom.role === 'cation' ? cationSymbol : anionSymbol;
+    });
+    return map;
+  }, [currentMolecule, symbolOrientation]);
+
+  // Placed electrons for the active compound:
+  // In Guided Mode (!isHardMode): start with neutral atoms so student physically drags electrons across
+  // In Exam Mode (isHardMode): start with empty outer shells so student manually places them
+  const [placedElectrons, setPlacedElectrons] = useState<PlacedElectron[]>(() => {
+    const initMol = MOLECULES[0];
+    return getInitialElectrons(initMol, symbolOrientation, isHardMode);
+  });
+
+  // Calculate live validation feedback
+  const feedback = useMemo(() => {
+    return validateMolecule(currentMolecule, placedElectrons, atomSymbols);
+  }, [currentMolecule, placedElectrons, atomSymbols]);
+
+  // Active electron tool
+  const [activeTool, setActiveTool] = useState<'dot' | 'cross' | 'eraser'>('dot');
+
+  // Hints toggle
+  const [showHints, setShowHints] = useState<boolean>(false);
+
+  // Sound toggle
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
+
   const handleToggleHardMode = () => {
     setIsHardMode((prev) => {
       const next = !prev;
@@ -60,6 +119,7 @@ export default function App() {
       } catch {
         // ignore
       }
+      setPlacedElectrons(getInitialElectrons(currentMolecule, symbolOrientation, next));
       if (next) {
         setShowHints(false);
         soundEffects.playNotice();
@@ -69,9 +129,6 @@ export default function App() {
       return next;
     });
   };
-
-  // Active navigation tab
-  const [activeTab, setActiveTab] = useState<'builder' | 'endless' | 'guide' | 'periodictable' | 'viewer3d'>('builder');
 
   // Curriculum completed compounds set
   const [completedMolecules, setCompletedMolecules] = useState<Set<string>>(() => {
@@ -124,30 +181,26 @@ export default function App() {
     message: string;
   } | null>(null);
 
-  // Active compound based on tab
-  const isEndless = activeTab === 'endless';
-  const currentMolecule = isEndless ? endlessMolecule : MOLECULES[currentMoleculeIndex];
-
-  // Calculate live validation feedback
-  const feedback = useMemo(() => {
-    return validateMolecule(currentMolecule, placedElectrons);
-  }, [currentMolecule, placedElectrons]);
-
-  // Synchronize audio setting
-  useEffect(() => {
-    soundEffects.enabled = soundEnabled;
-  }, [soundEnabled]);
-
-  // Reset placed electrons when changing compound in curriculum
+  // Reset placed electrons and randomize symbol orientation when changing compound in curriculum
   const handleSelectMolecule = (molecule: MoleculeDefinition) => {
     const idx = MOLECULES.findIndex((m) => m.id === molecule.id);
     if (idx !== -1) {
       setCurrentMoleculeIndex(idx);
-      setPlacedElectrons([]);
+      const newOrientation = Math.random() < 0.5 ? 'cation-dot' : 'cation-cross';
+      setSymbolOrientation(newOrientation);
+      setPlacedElectrons(getInitialElectrons(molecule, newOrientation, isHardMode));
       setActiveTool('dot');
       setShowHints(false);
       setSubmissionAlert(null);
     }
+  };
+
+  // Re-randomize / Shuffle symbol assignment explicitly
+  const handleShuffleSymbols = () => {
+    const nextOrientation = symbolOrientation === 'cation-dot' ? 'cation-cross' : 'cation-dot';
+    setSymbolOrientation(nextOrientation);
+    setPlacedElectrons(getInitialElectrons(currentMolecule, nextOrientation, isHardMode));
+    soundEffects.playNotice();
   };
 
   // Place electron freely
@@ -174,7 +227,7 @@ export default function App() {
 
       // Auto-submission logic for timed mode
       const isSurvivalHardMode = isEndless && endlessState.type === 'streak' && isHardMode;
-      const newFeedback = validateMolecule(currentMolecule, nextState);
+      const newFeedback = validateMolecule(currentMolecule, nextState, atomSymbols);
 
       if (newFeedback.isValid) {
         if (isEndless) {
@@ -183,6 +236,12 @@ export default function App() {
           }
         } else {
           if (!completedMolecules.has(currentMolecule.id)) {
+            confetti({
+              particleCount: 70,
+              spread: 70,
+              origin: { y: 0.6 },
+              colors: ['#a855f7', '#10b981', '#06b6d4', '#f59e0b'],
+            });
             soundEffects.playSuccess();
             const nextCompleted = new Set(completedMolecules);
             nextCompleted.add(currentMolecule.id);
@@ -209,12 +268,19 @@ export default function App() {
   };
 
   // Update electron coordinates (drag repositions)
-  const handleUpdateElectron = (id: string, x: number, y: number) => {
+  const handleUpdateElectron = (id: string, x: number, y: number, isDropFinal = false) => {
     const nextState = placedElectrons.map((e) => (e.id === id ? { ...e, x, y } : e));
     setPlacedElectrons(nextState);
 
+    // CRITICAL: While actively dragging or hovering, NEVER trigger celebration sparks, completion sounds, or round advances!
+    if (!isDropFinal) {
+      return;
+    }
+
+    soundEffects.playPlace('dot');
+
     const isSurvivalHardMode = isEndless && endlessState.type === 'streak' && isHardMode;
-    const newFeedback = validateMolecule(currentMolecule, nextState);
+    const newFeedback = validateMolecule(currentMolecule, nextState, atomSymbols);
     if (newFeedback.isValid) {
       if (isEndless) {
         if (!isSurvivalHardMode) {
@@ -222,6 +288,12 @@ export default function App() {
         }
       } else {
         if (!completedMolecules.has(currentMolecule.id)) {
+          confetti({
+            particleCount: 70,
+            spread: 70,
+            origin: { y: 0.6 },
+            colors: ['#a855f7', '#10b981', '#06b6d4', '#f59e0b'],
+          });
           soundEffects.playSuccess();
           const nextCompleted = new Set(completedMolecules);
           nextCompleted.add(currentMolecule.id);
@@ -236,22 +308,43 @@ export default function App() {
     }
   };
 
-  // Clear all electrons on current canvas
+  // Reset / Clear electrons on current canvas:
+  // In Guided Mode: resets starting neutral atoms so student can replay the drag transfer
+  // In Exam Mode: clears outer shells
   const handleClearElectrons = () => {
-    setPlacedElectrons([]);
+    setPlacedElectrons(getInitialElectrons(currentMolecule, symbolOrientation, isHardMode));
     soundEffects.playRemove();
   };
 
   // Load neutral starting atoms (before electron transfer)
   const handleLoadNeutralAtoms = () => {
-    const neutral = generateNeutralStartingPositions(currentMolecule);
-    setPlacedElectrons(neutral);
+    setPlacedElectrons(getInitialElectrons(currentMolecule, symbolOrientation, false));
     soundEffects.playNotice();
   };
 
   // Provide 1-step hint
   const handleProvideStepHint = () => {
-    const ideal = generateIdealPositions(currentMolecule, feedback.atomSymbols);
+    if (!isHardMode) {
+      // In Guided Mode: transfer one electron from the metal cation to the next open anion vacancy
+      const ideal = generateIdealPositions(currentMolecule, atomSymbols);
+      const cationElectrons = placedElectrons.filter((pe) =>
+        currentMolecule.atoms.some((a) => a.role === 'cation' && Math.hypot(pe.x - a.x, pe.y - a.y) <= a.radius + 35)
+      );
+
+      const targetSlot = ideal.find((ie) =>
+        currentMolecule.atoms.some((a) => a.role === 'anion' && Math.hypot(ie.x - a.x, ie.y - a.y) <= a.radius + 35) &&
+        !placedElectrons.some((pe) => Math.hypot(pe.x - ie.x, pe.y - ie.y) < 22)
+      );
+
+      if (cationElectrons.length > 0 && targetSlot) {
+        const electronToMove = cationElectrons[0];
+        handleUpdateElectron(electronToMove.id, targetSlot.x, targetSlot.y);
+        soundEffects.playPlace(electronToMove.type);
+        return;
+      }
+    }
+
+    const ideal = generateIdealPositions(currentMolecule, atomSymbols);
     const missing = ideal.find((ie) => {
       return !placedElectrons.some((pe) => Math.hypot(pe.x - ie.x, pe.y - ie.y) < 22);
     });
@@ -390,8 +483,10 @@ export default function App() {
 
     setTimeout(() => {
       const nextMol = getRandomEndlessMolecule(nextWave, endlessMolecule.id);
+      const nextOrientation = Math.random() < 0.5 ? 'cation-dot' : 'cation-cross';
       setEndlessMolecule(nextMol);
-      setPlacedElectrons([]);
+      setSymbolOrientation(nextOrientation);
+      setPlacedElectrons(getInitialElectrons(nextMol, nextOrientation, isHardMode));
       setShowHints(false);
       setActiveTool('dot');
       setSubmissionAlert(null);
@@ -443,15 +538,17 @@ export default function App() {
     }
 
     const nextMol = getRandomEndlessMolecule(endlessState.wave, endlessMolecule.id);
+    const nextOrientation = Math.random() < 0.5 ? 'cation-dot' : 'cation-cross';
     setEndlessMolecule(nextMol);
-    setPlacedElectrons([]);
+    setSymbolOrientation(nextOrientation);
+    setPlacedElectrons(getInitialElectrons(nextMol, nextOrientation, isHardMode));
     setShowHints(false);
   };
 
   // Power-up: Ion Spark (Transfers/completes 1 electron into an anion)
   const handleUseBondSpark = () => {
     if (!sparkAvailable) return;
-    const ideal = generateIdealPositions(currentMolecule, feedback.atomSymbols);
+    const ideal = generateIdealPositions(currentMolecule, atomSymbols);
     const missing = ideal.filter(
       (ie) => !placedElectrons.some((pe) => Math.hypot(pe.x - ie.x, pe.y - ie.y) < 20)
     );
@@ -473,7 +570,7 @@ export default function App() {
     soundEffects.playPlace('dot');
 
     const isSurvivalHardMode = isEndless && endlessState.type === 'streak' && isHardMode;
-    const check = validateMolecule(currentMolecule, nextState);
+    const check = validateMolecule(currentMolecule, nextState, atomSymbols);
     if (check.isValid && !isSurvivalHardMode) {
       handleEndlessRoundWon(false);
     }
@@ -491,7 +588,7 @@ export default function App() {
       return;
     }
 
-    const check = validateMolecule(currentMolecule, placedElectrons);
+    const check = validateMolecule(currentMolecule, placedElectrons, atomSymbols);
     if (check.isValid) {
       setSubmissionAlert(null);
       handleEndlessRoundWon(false);
@@ -559,8 +656,10 @@ export default function App() {
   // Restart Endless Run
   const handleRestartEndless = () => {
     const nextMol = getRandomEndlessMolecule(1);
+    const nextOrientation = Math.random() < 0.5 ? 'cation-dot' : 'cation-cross';
     setEndlessMolecule(nextMol);
-    setPlacedElectrons([]);
+    setSymbolOrientation(nextOrientation);
+    setPlacedElectrons(getInitialElectrons(nextMol, nextOrientation, isHardMode));
     setShowHints(false);
     setActiveTool('dot');
     setSparkAvailable(true);
@@ -584,8 +683,10 @@ export default function App() {
   // Change Endless Type (Blitz vs Streak)
   const handleChangeEndlessType = (newType: EndlessType) => {
     const nextMol = getRandomEndlessMolecule(1);
+    const nextOrientation = Math.random() < 0.5 ? 'cation-dot' : 'cation-cross';
     setEndlessMolecule(nextMol);
-    setPlacedElectrons([]);
+    setSymbolOrientation(nextOrientation);
+    setPlacedElectrons(getInitialElectrons(nextMol, nextOrientation, isHardMode));
     setShowHints(false);
     setSubmissionAlert(null);
     setEndlessState((prev) => ({
@@ -621,17 +722,13 @@ export default function App() {
 
   const handlePrevCurriculumMolecule = () => {
     if (hasPrevMolecule) {
-      setCurrentMoleculeIndex(currentMoleculeIndex - 1);
-      setPlacedElectrons([]);
-      setActiveTool('dot');
+      handleSelectMolecule(MOLECULES[currentMoleculeIndex - 1]);
     }
   };
 
   const handleNextCurriculumMolecule = () => {
     if (hasNextMolecule) {
-      setCurrentMoleculeIndex(currentMoleculeIndex + 1);
-      setPlacedElectrons([]);
-      setActiveTool('dot');
+      handleSelectMolecule(MOLECULES[currentMoleculeIndex + 1]);
     }
   };
 
@@ -642,7 +739,8 @@ export default function App() {
         activeTab={activeTab}
         onSelectTab={(tab) => {
           setActiveTab(tab);
-          setPlacedElectrons([]);
+          const targetMol = tab === 'endless' ? endlessMolecule : MOLECULES[currentMoleculeIndex];
+          setPlacedElectrons(getInitialElectrons(targetMol, symbolOrientation, isHardMode));
           setShowHints(false);
         }}
         onResetMolecule={handleClearElectrons}
@@ -714,6 +812,9 @@ export default function App() {
                     <h1 className="text-sm sm:text-base font-bold text-white tracking-tight leading-tight">
                       {currentMolecule.name}
                     </h1>
+                    <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-cyan-300 border border-slate-700 font-semibold">
+                      #{currentMoleculeIndex + 1} of {MOLECULES.length}
+                    </span>
                     <span
                       className={`text-[11px] font-semibold tracking-wide ${
                         isHardMode ? 'text-rose-400 font-mono' : 'text-cyan-400'
@@ -769,19 +870,42 @@ export default function App() {
                       value={currentMoleculeIndex}
                       onChange={(e) => {
                         const idx = parseInt(e.target.value, 10);
-                        if (!isNaN(idx)) {
-                          setCurrentMoleculeIndex(idx);
-                          setPlacedElectrons([]);
-                          setActiveTool('dot');
+                        if (!isNaN(idx) && MOLECULES[idx]) {
+                          handleSelectMolecule(MOLECULES[idx]);
                         }
                       }}
-                      className="bg-slate-900 border border-slate-700/80 text-cyan-300 text-xs font-semibold rounded px-2 py-0.5 cursor-pointer hover:border-cyan-500/50 focus:outline-none"
+                      className="bg-slate-900 border border-slate-700/80 text-cyan-300 text-xs font-semibold rounded px-2 py-0.5 cursor-pointer hover:border-cyan-500/50 focus:outline-none max-w-[200px] sm:max-w-[280px]"
                     >
-                      {MOLECULES.map((m, idx) => (
-                        <option key={m.id} value={idx}>
-                          #{idx + 1}: {m.name} ({m.formula}){completedMolecules.has(m.id) ? ' ✓' : ''}
-                        </option>
-                      ))}
+                      <optgroup label="Level 1: 1:1 Binary Transfer (16 Compounds)">
+                        {MOLECULES.filter((m) => m.level === 'beginner').map((m) => {
+                          const idx = MOLECULES.findIndex((mol) => mol.id === m.id);
+                          return (
+                            <option key={m.id} value={idx}>
+                              #{idx + 1}: {m.name} ({m.formula}){completedMolecules.has(m.id) ? ' ✓' : ''}
+                            </option>
+                          );
+                        })}
+                      </optgroup>
+                      <optgroup label="Level 2: 1:2 & 2:1 Multi-Ion Balance (15 Compounds)">
+                        {MOLECULES.filter((m) => m.level === 'intermediate').map((m) => {
+                          const idx = MOLECULES.findIndex((mol) => mol.id === m.id);
+                          return (
+                            <option key={m.id} value={idx}>
+                              #{idx + 1}: {m.name} ({m.formula}){completedMolecules.has(m.id) ? ' ✓' : ''}
+                            </option>
+                          );
+                        })}
+                      </optgroup>
+                      <optgroup label="Level 3: 1:3 & 2:3 Complex Charges (5 Compounds)">
+                        {MOLECULES.filter((m) => m.level === 'advanced').map((m) => {
+                          const idx = MOLECULES.findIndex((mol) => mol.id === m.id);
+                          return (
+                            <option key={m.id} value={idx}>
+                              #{idx + 1}: {m.name} ({m.formula}){completedMolecules.has(m.id) ? ' ✓' : ''}
+                            </option>
+                          );
+                        })}
+                      </optgroup>
                     </select>
 
                     <button
@@ -842,7 +966,7 @@ export default function App() {
                   showHints={showHints}
                   isCompleted={feedback.isValid}
                   isHardMode={isHardMode}
-                  atomSymbols={feedback.atomSymbols}
+                  atomSymbols={atomSymbols}
                 />
 
                 {/* Valence Inventory Bar */}
@@ -862,21 +986,21 @@ export default function App() {
                   </div>
                 ) : (
                   <div className="bg-slate-900/60 border border-slate-800 rounded-lg px-3 py-1.5 flex items-center justify-between text-xs text-slate-400">
-                    <div className="flex items-center gap-2 sm:gap-3">
-                      <span className="text-slate-300 font-medium text-[11px]">Transferred:</span>
+                    <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+                      <span className="text-slate-300 font-medium text-[11px]">Valence Inventory:</span>
                       <span className="text-cyan-300 font-mono font-semibold text-xs">
-                        ● {feedback.expectedDots} Metal e⁻
+                        {feedback.activeOrientation === 'standard' ? '●' : '✖'} {currentMolecule.electronsTransferred} Metal e⁻ (transferred)
                       </span>
                       <span className="text-slate-600">·</span>
                       <span className="text-amber-300 font-mono font-semibold text-xs">
-                        ✖ {feedback.expectedCrosses} Non-Metal e⁻
+                        {feedback.activeOrientation === 'standard' ? '✖' : '●'} {currentMolecule.atoms.filter((a) => a.role === 'anion').reduce((sum, a) => sum + a.element.valenceElectrons, 0)} Non-Metal e⁻
                       </span>
-                      <span className="text-[10px] text-slate-500 hidden md:inline">
-                        (transfer to octet)
+                      <span className="text-[10px] text-emerald-400 font-mono hidden md:inline">
+                        (Anion Target: 8 e⁻)
                       </span>
                     </div>
                     <div className="text-slate-400 text-[11px] hidden sm:block">
-                      Compound Target: <span className="font-mono text-emerald-400 font-bold">{currentMolecule.formula}</span> (Net Charge: 0)
+                      Compound: <span className="font-mono text-emerald-400 font-bold">{currentMolecule.formula}</span> (Net Charge: 0)
                     </div>
                   </div>
                 )}
@@ -896,9 +1020,10 @@ export default function App() {
                   onProvideStepHint={handleProvideStepHint}
                   onAutoSolve={handleAutoSolve}
                   onLoadNeutralAtoms={handleLoadNeutralAtoms}
+                  onShuffleSymbols={handleShuffleSymbols}
                   isCompleted={feedback.isValid}
                   isHardMode={isHardMode}
-                  atomSymbols={feedback.atomSymbols}
+                  atomSymbols={atomSymbols}
                   expectedDots={feedback.expectedDots}
                   expectedCrosses={feedback.expectedCrosses}
                 />

@@ -14,7 +14,7 @@ interface MolecularCanvasProps {
   activeTool: 'dot' | 'cross' | 'eraser';
   onPlaceElectron: (electron: PlacedElectron) => void;
   onRemoveElectron: (id: string) => void;
-  onUpdateElectron: (id: string, x: number, y: number) => void;
+  onUpdateElectron: (id: string, x: number, y: number, isDropFinal?: boolean) => void;
   showHints: boolean;
   isCompleted: boolean;
   isHardMode?: boolean;
@@ -36,6 +36,8 @@ export const MolecularCanvas: React.FC<MolecularCanvasProps> = ({
   const svgRef = useRef<SVGSVGElement>(null);
   const [hoverCoord, setHoverCoord] = useState<{ x: number; y: number } | null>(null);
   const [draggingElectronId, setDraggingElectronId] = useState<string | null>(null);
+  const dragStartPosRef = useRef<{ x: number; y: number } | null>(null);
+  const hasDraggedRef = useRef<boolean>(false);
 
   // Zoom & Pan interactive state
   const [zoom, setZoom] = useState<number>(1);
@@ -165,8 +167,9 @@ export const MolecularCanvas: React.FC<MolecularCanvasProps> = ({
   };
 
   const handleCanvasClick = (e: React.MouseEvent<SVGSVGElement>) => {
-    if (hasMovedRef.current) {
+    if (hasMovedRef.current || hasDraggedRef.current) {
       hasMovedRef.current = false;
+      hasDraggedRef.current = false;
       return;
     }
 
@@ -176,19 +179,26 @@ export const MolecularCanvas: React.FC<MolecularCanvasProps> = ({
     // Check if clicking existing electron
     const existing = findElectronAt(coords.x, coords.y);
     if (existing) {
-      if (activeTool === 'eraser' || existing.type === activeTool) {
+      if (activeTool === 'eraser') {
         onRemoveElectron(existing.id);
-      } else {
-        const swapId =
-          typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-            ? `elec-${crypto.randomUUID()}`
-            : `elec-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-        onRemoveElectron(existing.id);
-        onPlaceElectron({ ...existing, id: swapId, type: activeTool });
+      } else if (isHardMode) {
+        if (existing.type === activeTool) {
+          onRemoveElectron(existing.id);
+        } else {
+          const swapId =
+            typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+              ? `elec-${crypto.randomUUID()}`
+              : `elec-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+          onRemoveElectron(existing.id);
+          onPlaceElectron({ ...existing, id: swapId, type: activeTool });
+        }
       }
       return;
     }
 
+    // In Guided mode, student drags electrons from the metal rather than clicking blank canvas.
+    // Placing new electrons directly from clicks is active in Exam mode!
+    if (!isHardMode) return;
     if (activeTool === 'eraser') return;
 
     // Snap to outer orbit of nearest atom
@@ -224,9 +234,12 @@ export const MolecularCanvas: React.FC<MolecularCanvasProps> = ({
       const otherElectrons = placedElectrons.filter((pe) => pe.id !== draggingElectronId);
       const snapped = snapElectronPosition(molecule, coords.x, coords.y, otherElectrons);
       if (snapped) {
-        onUpdateElectron(draggingElectronId, snapped.x, snapped.y);
+        onUpdateElectron(draggingElectronId, snapped.x, snapped.y, true);
+      } else if (!isHardMode && dragStartPosRef.current) {
+        onUpdateElectron(draggingElectronId, dragStartPosRef.current.x, dragStartPosRef.current.y, false);
       }
       setDraggingElectronId(null);
+      dragStartPosRef.current = null;
       return;
     }
 
@@ -273,35 +286,83 @@ export const MolecularCanvas: React.FC<MolecularCanvasProps> = ({
     if (!coords) return;
 
     if (draggingElectronId) {
-      const otherElectrons = placedElectrons.filter((pe) => pe.id !== draggingElectronId);
-      const snapped = snapElectronPosition(molecule, coords.x, coords.y, otherElectrons);
-      if (snapped) {
-        onUpdateElectron(draggingElectronId, snapped.x, snapped.y);
+      if (dragStartPosRef.current) {
+        const d = Math.hypot(coords.x - dragStartPosRef.current.x, coords.y - dragStartPosRef.current.y);
+        if (d > 4) {
+          hasDraggedRef.current = true;
+        }
       }
+      // Follow cursor in real time across the canvas (actively dragging, not dropped yet)
+      onUpdateElectron(draggingElectronId, coords.x, coords.y, false);
       return;
     }
 
-    const classification = classifyElectron(molecule, coords.x, coords.y);
-    if (classification.region !== 'outside') {
-      const snapped = snapElectronPosition(molecule, coords.x, coords.y, placedElectrons);
-      setHoverCoord(snapped ?? coords);
+    if (isHardMode) {
+      const classification = classifyElectron(molecule, coords.x, coords.y);
+      if (classification.region !== 'outside') {
+        const snapped = snapElectronPosition(molecule, coords.x, coords.y, placedElectrons);
+        setHoverCoord(snapped ?? coords);
+      } else {
+        setHoverCoord(null);
+      }
     } else {
       setHoverCoord(null);
     }
   };
 
-  const handleMouseUp = () => {
+  const handleMouseUp = (e: React.MouseEvent<SVGSVGElement>) => {
     setIsPanning(false);
-    setDraggingElectronId(null);
+
+    if (draggingElectronId) {
+      if (hasDraggedRef.current) {
+        const coords = getSvgCoordinates(e.clientX, e.clientY);
+        if (coords) {
+          const otherElectrons = placedElectrons.filter((pe) => pe.id !== draggingElectronId);
+          const snapped = snapElectronPosition(molecule, coords.x, coords.y, otherElectrons);
+          if (snapped) {
+            onUpdateElectron(draggingElectronId, snapped.x, snapped.y, true);
+          } else if (!isHardMode && dragStartPosRef.current) {
+            // In Guided mode, if released out in empty space, return to origin
+            onUpdateElectron(draggingElectronId, dragStartPosRef.current.x, dragStartPosRef.current.y, false);
+          }
+        }
+      }
+      setDraggingElectronId(null);
+      dragStartPosRef.current = null;
+      setTimeout(() => {
+        hasDraggedRef.current = false;
+      }, 60);
+    }
   };
 
   const handleMouseLeave = () => {
     setHoverCoord(null);
-    setDraggingElectronId(null);
+    if (draggingElectronId) {
+      if (!isHardMode && dragStartPosRef.current) {
+        onUpdateElectron(draggingElectronId, dragStartPosRef.current.x, dragStartPosRef.current.y, false);
+      }
+      setDraggingElectronId(null);
+      dragStartPosRef.current = null;
+      hasDraggedRef.current = false;
+    }
     setIsPanning(false);
   };
 
   const idealGhostHints = !isHardMode && showHints ? generateIdealPositions(molecule, atomSymbols) : [];
+
+  const standardOctetAngles = useMemo(
+    () => [
+      -Math.PI / 2 - 0.24,
+      -Math.PI / 2 + 0.24,
+      -0.24,
+      0.24,
+      Math.PI / 2 - 0.24,
+      Math.PI / 2 + 0.24,
+      Math.PI - 0.24,
+      -Math.PI + 0.24,
+    ],
+    []
+  );
 
   return (
     <div className="relative w-full aspect-[840/510] min-h-[360px] max-h-[440px] lg:max-h-[470px] bg-slate-950/90 border border-slate-800 rounded-xl shadow-xl overflow-hidden select-none">
@@ -363,6 +424,19 @@ export const MolecularCanvas: React.FC<MolecularCanvasProps> = ({
         <span className="text-slate-300">{molecule.bondTypeSummary}</span>
       </div>
 
+      {/* Mode Instruction Pill */}
+      {!isHardMode ? (
+        <div className="absolute top-2.5 left-1/2 -translate-x-1/2 z-20 hidden sm:flex items-center gap-1.5 bg-slate-900/90 backdrop-blur-md border border-cyan-500/40 px-3 py-1 rounded-full text-[11px] font-medium text-cyan-200 shadow-lg">
+          <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+          <span>Guided Mode: Drag metal valence electrons across to non-metal</span>
+        </div>
+      ) : (
+        <div className="absolute top-2.5 left-1/2 -translate-x-1/2 z-20 hidden sm:flex items-center gap-1.5 bg-slate-900/90 backdrop-blur-md border border-rose-500/40 px-3 py-1 rounded-full text-[11px] font-medium text-rose-300 shadow-lg">
+          <span className="w-2 h-2 rounded-full bg-rose-400" />
+          <span>Exam Mode: Place electrons onto outer valence shells</span>
+        </div>
+      )}
+
       <svg
         ref={svgRef}
         viewBox={currentViewBox}
@@ -377,6 +451,36 @@ export const MolecularCanvas: React.FC<MolecularCanvasProps> = ({
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseLeave}
+        onTouchMove={(e) => {
+          if (draggingElectronId && e.touches[0]) {
+            const coords = getSvgCoordinates(e.touches[0].clientX, e.touches[0].clientY);
+            if (coords) {
+              hasDraggedRef.current = true;
+              onUpdateElectron(draggingElectronId, coords.x, coords.y, false);
+            }
+          }
+        }}
+        onTouchEnd={(e) => {
+          if (draggingElectronId) {
+            if (hasDraggedRef.current && e.changedTouches[0]) {
+              const coords = getSvgCoordinates(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
+              if (coords) {
+                const otherElectrons = placedElectrons.filter((pe) => pe.id !== draggingElectronId);
+                const snapped = snapElectronPosition(molecule, coords.x, coords.y, otherElectrons);
+                if (snapped) {
+                  onUpdateElectron(draggingElectronId, snapped.x, snapped.y, true);
+                } else if (!isHardMode && dragStartPosRef.current) {
+                  onUpdateElectron(draggingElectronId, dragStartPosRef.current.x, dragStartPosRef.current.y, false);
+                }
+              }
+            }
+            setDraggingElectronId(null);
+            dragStartPosRef.current = null;
+            setTimeout(() => {
+              hasDraggedRef.current = false;
+            }, 60);
+          }
+        }}
       >
         <defs>
           <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
@@ -469,14 +573,126 @@ export const MolecularCanvas: React.FC<MolecularCanvasProps> = ({
           );
         })}
 
-        {/* 2. Atom Valence Shell Circular Orbits */}
+        {/* 2. Atom Valence Shell Circular Orbits (Visible Inner Shells with Inferred Dots/Crosses + Outermost Interactive Shell) */}
         {molecule.atoms.map((atom) => {
           const isCation = atom.role === 'cation';
           const orbitStroke = isCation ? '#8b5cf6' : '#10b981';
+          const assignedType: ElectronType = (atomSymbols && atomSymbols[atom.id]) || atom.symbol;
+          const isDot = assignedType === 'dot';
+          const innerRingStroke = isDot ? '#06b6d4' : '#f59e0b';
 
           return (
             <g key={`shell-${atom.id}`}>
-              {/* Outer boundary circular ring */}
+              {/* A. Visible, Brighter Non-Interactive Inner Shells (with inferred dot/cross symbols) */}
+              {atom.innerShellRadii?.map((innerR, idx) => {
+                const count = atom.element.innerShells?.[idx] ?? (idx === 0 ? 2 : 8);
+                const angles =
+                  count === 2
+                    ? [-Math.PI / 2, Math.PI / 2]
+                    : count === 8
+                    ? [
+                        -Math.PI / 2 - 0.24,
+                        -Math.PI / 2 + 0.24,
+                        -0.24,
+                        0.24,
+                        Math.PI / 2 - 0.24,
+                        Math.PI / 2 + 0.24,
+                        Math.PI - 0.24,
+                        -Math.PI + 0.24,
+                      ]
+                    : Array.from({ length: count }, (_, eIdx) => -Math.PI / 2 + (eIdx * 2 * Math.PI) / count);
+
+                return (
+                  <g key={`inner-shell-${atom.id}-${idx}`} className="pointer-events-none select-none">
+                    {/* Brighter inner shell boundary glow & orbit */}
+                    <circle
+                      cx={atom.x}
+                      cy={atom.y}
+                      r={innerR}
+                      fill="none"
+                      stroke={innerRingStroke}
+                      strokeWidth="3.5"
+                      opacity="0.25"
+                    />
+                    <circle
+                      cx={atom.x}
+                      cy={atom.y}
+                      r={innerR}
+                      fill="none"
+                      stroke={innerRingStroke}
+                      strokeWidth="1.8"
+                      strokeDasharray="5 3"
+                      opacity="0.85"
+                    />
+
+                    {/* Pre-filled high-contrast bright inner electrons rendered as dots or crosses */}
+                    {angles.map((ang, eIdx) => {
+                      const ex = atom.x + innerR * Math.cos(ang);
+                      const ey = atom.y + innerR * Math.sin(ang);
+
+                      if (isDot) {
+                        return (
+                          <g key={`inner-e-${atom.id}-${idx}-${eIdx}`}>
+                            {/* Outer soft glow */}
+                            <circle
+                              cx={ex}
+                              cy={ey}
+                              r={7}
+                              fill="#06b6d4"
+                              opacity="0.35"
+                            />
+                            {/* Crisp solid dot */}
+                            <circle
+                              cx={ex}
+                              cy={ey}
+                              r={4.8}
+                              fill="#22d3ee"
+                              stroke="#0891b2"
+                              strokeWidth="1.2"
+                              opacity="1"
+                            />
+                            {/* Inner specular glint */}
+                            <circle
+                              cx={ex - 1.5}
+                              cy={ey - 1.5}
+                              r={1.6}
+                              fill="#ffffff"
+                              opacity="0.95"
+                            />
+                          </g>
+                        );
+                      } else {
+                        return (
+                          <g key={`inner-e-${atom.id}-${idx}-${eIdx}`}>
+                            {/* Cross backing glow */}
+                            <g stroke="#f59e0b" strokeWidth="5.5" strokeLinecap="round" opacity="0.35">
+                              <line x1={ex - 4.8} y1={ey - 4.8} x2={ex + 4.8} y2={ey + 4.8} />
+                              <line x1={ex + 4.8} y1={ey - 4.8} x2={ex - 4.8} y2={ey + 4.8} />
+                            </g>
+                            {/* Crisp bold cross */}
+                            <g stroke="#fbbf24" strokeWidth="3" strokeLinecap="round" opacity="1">
+                              <line x1={ex - 4.5} y1={ey - 4.5} x2={ex + 4.5} y2={ey + 4.5} />
+                              <line x1={ex + 4.5} y1={ey - 4.5} x2={ex - 4.5} y2={ey + 4.5} />
+                            </g>
+                          </g>
+                        );
+                      }
+                    })}
+
+                    {/* Shell level badge */}
+                    <text
+                      x={atom.x}
+                      y={atom.y - innerR + 11}
+                      textAnchor="middle"
+                      className="text-[9.5px] font-mono font-bold fill-slate-200 select-none opacity-85"
+                    >
+                      n={idx + 1}
+                    </text>
+                  </g>
+                );
+              })}
+
+              {/* B. Outermost Interactive Valence Shell */}
               <circle
                 cx={atom.x}
                 cy={atom.y}
@@ -484,7 +700,7 @@ export const MolecularCanvas: React.FC<MolecularCanvasProps> = ({
                 fill="#0f172a"
                 fillOpacity="0.45"
                 stroke={orbitStroke}
-                strokeWidth="2"
+                strokeWidth="2.2"
                 strokeDasharray={isCation ? '4 3' : 'none'}
                 className="transition-colors duration-300"
               />
@@ -500,18 +716,18 @@ export const MolecularCanvas: React.FC<MolecularCanvasProps> = ({
                 opacity="0.3"
               />
 
-              {/* Empty outer shell indication for cation if emptied */}
-              {isCation && (
-                <text
-                  x={atom.x}
-                  y={atom.y + atom.radius + 18}
-                  textAnchor="middle"
-                  className="text-[9px] font-mono select-none pointer-events-none fill-slate-400 font-semibold"
-                  style={{ fontSize: '9.5px' }}
-                >
-                  Outer Shell Emptied
-                </text>
-              )}
+              {/* Outermost shell descriptor text */}
+              <text
+                x={atom.x}
+                y={atom.y + atom.radius + 18}
+                textAnchor="middle"
+                className="text-[9px] font-mono select-none pointer-events-none fill-slate-400 font-semibold"
+                style={{ fontSize: '9.5px' }}
+              >
+                {isCation
+                  ? 'Outer Shell Emptied'
+                  : `Outermost Shell (n=${atom.element.period || (atom.innerShellRadii ? atom.innerShellRadii.length + 1 : 2)})`}
+              </text>
             </g>
           );
         })}
@@ -584,62 +800,204 @@ export const MolecularCanvas: React.FC<MolecularCanvasProps> = ({
           </g>
         )}
 
-        {/* 5. Placed Electrons (Freely Positioned / Transferred by Student) */}
-        {placedElectrons.map((electron) => (
-          <g
-            key={electron.id}
-            transform={`translate(${electron.x}, ${electron.y})`}
-            className="cursor-grab active:cursor-grabbing group"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (activeTool === 'eraser' || electron.type === activeTool) {
-                onRemoveElectron(electron.id);
-              } else {
-                const swapId =
-                  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-                    ? `elec-${crypto.randomUUID()}`
-                    : `elec-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-                onRemoveElectron(electron.id);
-                onPlaceElectron({ ...electron, id: swapId, type: activeTool });
-              }
-            }}
-            onMouseDown={(e) => {
-              e.stopPropagation();
-              setDraggingElectronId(electron.id);
-            }}
-          >
-            {/* Click target hit circle */}
-            <circle
-              r={14}
-              fill="rgba(15, 23, 42, 0.95)"
-              stroke={electron.type === 'dot' ? '#06b6d4' : '#f59e0b'}
-              strokeWidth={1.8}
-            />
+        {/* 4.5. Guided Mode Vacancy Drop Targets on Non-Metal Anions */}
+        {!isHardMode && (
+          <g className="pointer-events-none select-none">
+            {molecule.atoms
+              .filter((a) => a.role === 'anion')
+              .map((anion) => {
+                const anionElectrons = placedElectrons.filter(
+                  (pe) => pe.id !== draggingElectronId && Math.hypot(pe.x - anion.x, pe.y - anion.y) <= anion.radius + 30
+                );
+                const occupiedAngles = anionElectrons.map((pe) => Math.atan2(pe.y - anion.y, pe.x - anion.x));
 
-            {/* Placed Dot representation (Metal origin) */}
-            {electron.type === 'dot' && (
-              <g filter="url(#glow)">
-                <circle r={8} fill="#06b6d4" fillOpacity="0.35" />
-                <circle r={6.5} fill="#06b6d4" />
-                <circle cx={-2} cy={-2} r={2} fill="#ffffff" fillOpacity="0.8" />
-              </g>
-            )}
+                const vacantAngles = standardOctetAngles.filter((stdAngle) => {
+                  return !occupiedAngles.some((occ) => {
+                    let diff = Math.abs(occ - stdAngle);
+                    if (diff > Math.PI) diff = 2 * Math.PI - diff;
+                    return diff < 0.25;
+                  });
+                });
 
-            {/* Placed Cross representation (Non-Metal origin) */}
-            {electron.type === 'cross' && (
-              <g
-                filter="url(#glow)"
-                stroke="#f59e0b"
-                strokeWidth="3.2"
-                strokeLinecap="round"
-                className="transition-transform duration-150"
-              >
-                <line x1="-6.5" y1="-6.5" x2="6.5" y2="6.5" />
-                <line x1="6.5" y1="-6.5" x2="-6.5" y2="6.5" />
-              </g>
-            )}
+                const isActivelyDragging = !!draggingElectronId;
+
+                return vacantAngles.map((ang, vIdx) => {
+                  const vx = Math.round(anion.x + anion.radius * Math.cos(ang));
+                  const vy = Math.round(anion.y + anion.radius * Math.sin(ang));
+
+                  return (
+                    <g key={`vacancy-${anion.id}-${vIdx}`}>
+                      <circle
+                        cx={vx}
+                        cy={vy}
+                        r={isActivelyDragging ? 14 : 10}
+                        fill={isActivelyDragging ? 'rgba(56, 189, 248, 0.22)' : 'none'}
+                        stroke="#38bdf8"
+                        strokeWidth={isActivelyDragging ? 2.2 : 1.4}
+                        strokeDasharray="4 3"
+                        opacity={isActivelyDragging ? 0.95 : 0.45}
+                        className={isActivelyDragging ? 'animate-pulse' : ''}
+                      />
+                      <text
+                        x={vx}
+                        y={vy + 3.5}
+                        textAnchor="middle"
+                        className="font-mono font-bold select-none"
+                        style={{
+                          fontSize: isActivelyDragging ? '12px' : '9.5px',
+                          fill: '#38bdf8',
+                          opacity: isActivelyDragging ? 1 : 0.55,
+                        }}
+                      >
+                        +
+                      </text>
+                    </g>
+                  );
+                });
+              })}
           </g>
-        ))}
+        )}
+
+        {/* 4.6. Guided Mode Drag Tether Line */}
+        {!isHardMode && draggingElectronId && dragStartPosRef.current && (
+          <g className="pointer-events-none select-none">
+            {(() => {
+              const currentDragging = placedElectrons.find((pe) => pe.id === draggingElectronId);
+              if (!currentDragging) return null;
+              return (
+                <line
+                  x1={dragStartPosRef.current.x}
+                  y1={dragStartPosRef.current.y}
+                  x2={currentDragging.x}
+                  y2={currentDragging.y}
+                  stroke={currentDragging.type === 'dot' ? '#06b6d4' : '#f59e0b'}
+                  strokeWidth="2.5"
+                  strokeDasharray="5 4"
+                  opacity="0.75"
+                />
+              );
+            })()}
+          </g>
+        )}
+
+        {/* 5. Placed Electrons (Freely Positioned / Transferred by Student) */}
+        {placedElectrons.map((electron) => {
+          const isOnCation = molecule.atoms.some(
+            (a) => a.role === 'cation' && Math.hypot(electron.x - a.x, electron.y - a.y) <= a.radius + 30
+          );
+          const isCurrentDrag = draggingElectronId === electron.id;
+
+          return (
+            <g
+              key={electron.id}
+              transform={`translate(${electron.x}, ${electron.y})`}
+              className="cursor-grab active:cursor-grabbing group select-none"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (hasDraggedRef.current) {
+                  hasDraggedRef.current = false;
+                  return;
+                }
+                if (!isHardMode && activeTool !== 'eraser') return;
+                if (activeTool === 'eraser' || electron.type === activeTool) {
+                  onRemoveElectron(electron.id);
+                } else if (isHardMode) {
+                  const swapId =
+                    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+                      ? `elec-${crypto.randomUUID()}`
+                      : `elec-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+                  onRemoveElectron(electron.id);
+                  onPlaceElectron({ ...electron, id: swapId, type: activeTool });
+                }
+              }}
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                setDraggingElectronId(electron.id);
+                dragStartPosRef.current = { x: electron.x, y: electron.y };
+                hasDraggedRef.current = false;
+              }}
+              onTouchStart={(e) => {
+                e.stopPropagation();
+                if (e.touches[0]) {
+                  const coords = getSvgCoordinates(e.touches[0].clientX, e.touches[0].clientY);
+                  setDraggingElectronId(electron.id);
+                  dragStartPosRef.current = coords ?? { x: electron.x, y: electron.y };
+                  hasDraggedRef.current = false;
+                }
+              }}
+            >
+              {/* Guided Mode Draggable Cue on Metal Outer Electrons */}
+              {!isHardMode && isOnCation && !isCurrentDrag && (
+                <g className="pointer-events-none select-none">
+                  {/* Pulsing draggable halo */}
+                  <circle
+                    r={18}
+                    fill="none"
+                    stroke={electron.type === 'dot' ? '#06b6d4' : '#f59e0b'}
+                    strokeWidth={1.8}
+                    strokeDasharray="4 3"
+                    className="animate-pulse"
+                    opacity={0.85}
+                  />
+                  {/* Directional Tag */}
+                  <g transform="translate(0, -18)">
+                    <rect
+                      x="-20"
+                      y="-11"
+                      width="40"
+                      height="12"
+                      rx="3"
+                      fill="#0f172a"
+                      fillOpacity="0.9"
+                      stroke={electron.type === 'dot' ? '#06b6d4' : '#f59e0b'}
+                      strokeWidth="1"
+                    />
+                    <text
+                      y="-2.5"
+                      textAnchor="middle"
+                      className="text-[8px] font-mono font-bold"
+                      fill={electron.type === 'dot' ? '#22d3ee' : '#fbbf24'}
+                    >
+                      DRAG ➔
+                    </text>
+                  </g>
+                </g>
+              )}
+
+              {/* Click target hit circle */}
+              <circle
+                r={isCurrentDrag ? 17 : 14}
+                fill="rgba(15, 23, 42, 0.95)"
+                stroke={electron.type === 'dot' ? '#06b6d4' : '#f59e0b'}
+                strokeWidth={isCurrentDrag ? 2.5 : 1.8}
+                filter={isCurrentDrag ? 'url(#glow)' : undefined}
+              />
+
+              {/* Placed Dot representation (Metal origin) */}
+              {electron.type === 'dot' && (
+                <g filter="url(#glow)">
+                  <circle r={8} fill="#06b6d4" fillOpacity="0.35" />
+                  <circle r={6.5} fill="#06b6d4" />
+                  <circle cx={-2} cy={-2} r={2} fill="#ffffff" fillOpacity="0.8" />
+                </g>
+              )}
+
+              {/* Placed Cross representation (Non-Metal origin) */}
+              {electron.type === 'cross' && (
+                <g
+                  filter="url(#glow)"
+                  stroke="#f59e0b"
+                  strokeWidth="3.2"
+                  strokeLinecap="round"
+                  className="transition-transform duration-150"
+                >
+                  <line x1="-6.5" y1="-6.5" x2="6.5" y2="6.5" />
+                  <line x1="6.5" y1="-6.5" x2="-6.5" y2="6.5" />
+                </g>
+              )}
+            </g>
+          );
+        })}
 
         {/* 6. Active Tool Hover Cursor Preview */}
         {hoverCoord && activeTool !== 'eraser' && (

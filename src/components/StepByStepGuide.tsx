@@ -17,9 +17,9 @@ export const StepByStepGuide: React.FC<{ onStartBuilding: () => void }> = ({ onS
       details: [
         'Metals (Groups 1, 2, 3: Na, K, Mg, Ca, Al) → have few valence electrons and low ionization energies. They easily lose electrons to form positive cations.',
         'Non-Metals (Groups 5, 6, 7: N, O, S, Cl, Br, F) → have nearly full outer shells and high electron affinities. They gain electrons to form negative anions.',
-        'Dot and Cross Rule: Draw electrons from the metal as dots (●) and electrons from the non-metal as crosses (✖) so the origin of every electron is crystal clear.',
+        'Dot and Cross Rule: Use dots (●) for one element and crosses (✖) for the other element. Always check the inner shells or diagram prompt to infer which symbol represents which atom.',
       ],
-      proTip: 'In IGCSE exams, always use dots for one element and crosses for the other. Transferred electrons on the non-metal will stand out as dots among crosses!',
+      proTip: 'In exams and this lab, either element can use dots or crosses! Inspect the atom’s inner shells to see which symbol it uses, and make sure transferred electrons match the donor metal’s symbol.',
     },
     {
       step: 2,
